@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>drl</name>
+  <version>1.0.0</version>
+  <description>Deep Reinforcement Learning UAV Navigation Package</description>
+  
+  <maintainer email="oguz@example.com">Oguz</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <!-- ROS Core -->
+  <depend>rospy</depend>
+  <depend>roscpp</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  
+  <!-- Robot Model -->
+  <depend>urdf</depend>
+  <depend>xacro</depend>
+  <depend>robot_state_publisher</depend>
+  <depend>joint_state_publisher</depend>
+  
+  <!-- Gazebo -->
+  <depend>gazebo_ros</depend>
+  <depend>gazebo_plugins</depend>
+  <depend>gazebo_msgs</depend>
+  
+  <!-- Camera & Sensors -->
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
+  
+  <!-- MAVROS -->
+  <depend>mavros</depend>
+  <depend>mavros_msgs</depend>
+
+  <export>
+    <gazebo_ros gazebo_model_path="${prefix}/models"/>
+    <gazebo_ros gazebo_media_path="${prefix}/worlds"/>
+  </export>
+
+</package>

@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="world_file" default="$(find ardupilot_city_sim)/worlds/city_sim.world"/>
+  <arg name="gui" default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="use_sim_time" default="true"/>
+
+  <env name="GAZEBO_MODEL_PATH"
+       value="$(find ardupilot_city_sim)/models:$(env HOME)/ardupilot_gazebo/models:$(env HOME)/ardupilot_gazebo/models_gazebo:$(env GAZEBO_MODEL_PATH)"/>
+  <env name="GAZEBO_RESOURCE_PATH"
+       value="$(find ardupilot_city_sim)/worlds:$(env HOME)/ardupilot_gazebo/worlds:$(env GAZEBO_RESOURCE_PATH)"/>
+  <env name="GAZEBO_PLUGIN_PATH"
+       value="$(env HOME)/ardupilot_gazebo/build:$(env GAZEBO_PLUGIN_PATH)"/>
+
+  <param name="use_sim_time" value="$(arg use_sim_time)"/>
+
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world_file)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="verbose" value="false"/>
+  </include>
+
+  <node pkg="ardupilot_city_sim" type="dynamic_obstacle_controller.py"
+        name="dynamic_obstacle_controller" output="screen"/>
+</launch>

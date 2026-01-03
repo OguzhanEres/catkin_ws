@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ==================== ARGUMENTS ==================== -->
+  <arg name="world_file" default="$(find drl)/worlds/training_environment.world"/>
+  <arg name="model" default="$(find drl)/urdf/quadcopter.urdf.xacro"/>
+  <arg name="x" default="-8.0"/>
+  <arg name="y" default="-8.0"/>
+  <arg name="z" default="0.5"/>
+  <arg name="yaw" default="0.785"/>
+  <arg name="gui" default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="use_sim_time" default="true"/>
+
+  <!-- ==================== GAZEBO ==================== -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world_file)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="verbose" value="false"/>
+  </include>
+
+  <!-- ==================== ROBOT DESCRIPTION ==================== -->
+  <param name="robot_description" command="$(find xacro)/xacro $(arg model)"/>
+
+  <!-- ==================== SPAWN ROBOT ==================== -->
+  <node name="spawn_urdf" pkg="gazebo_ros" type="spawn_model"
+        args="-urdf -model quadcopter -param robot_description -x $(arg x) -y $(arg y) -z $(arg z) -Y $(arg yaw)"
+        output="screen"/>
+
+  <!-- ==================== ROBOT STATE PUBLISHER ==================== -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
+    <param name="publish_frequency" value="50.0"/>
+  </node>
+
+  <!-- ==================== JOINT STATE PUBLISHER ==================== -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher">
+    <param name="rate" value="50"/>
+  </node>
+
+  <!-- ==================== TF STATIC TRANSFORMS ==================== -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+        args="0 0 0 0 0 0 world map"/>
+
+</launch>

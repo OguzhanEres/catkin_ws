@@ -1,0 +1,26 @@
+# ArduPilot SITL overrides for gazebo-iris
+ARMING_SKIPCHK 0
+ARMING_NEED_LOC 1
+ARMING_CHECK 1
+# Reduce scheduler loop rate to match typical WSL+Gazebo performance and avoid
+# PreArm "Main loop slow (250Hz < 400Hz)" + gyro-rate prearm warnings.
+SCHED_LOOP_RATE 250
+GPS1_TYPE 1
+GPS2_TYPE 0
+AHRS_GPS_USE 1
+COMPASS_USE 1
+COMPASS_USE2 0
+COMPASS_USE3 0
+EK3_SRC1_POSXY 3
+EK3_SRC1_VELXY 3
+EK3_SRC1_VELZ 3
+EK3_SRC1_POSZ 1
+# Prefer compass yaw in Gazebo SITL to avoid EKF3 "Yaw inconsistent" blocking GUIDED/AUTO.
+EK3_SRC1_YAW 1
+
+# MAVLink stream rates (ArduPilot 4.7+ uses MAVx_* instead of SRx_*)
+MAV1_POSITION 10
+MAV1_EXT_STAT 10
+MAV1_EXTRA1 10
+MAV1_EXTRA2 10
+

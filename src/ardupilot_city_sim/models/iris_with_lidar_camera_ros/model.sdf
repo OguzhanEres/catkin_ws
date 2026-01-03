@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="iris_with_lidar_camera_ros">
+    <pose>0 0 0 0 0 0</pose>
+
+    <!-- Official ArduPilot-provided Gazebo quadcopter model (includes ArduPilotPlugin). -->
+    <include>
+      <uri>model://iris_with_standoffs_demo</uri>
+      <name>iris_demo</name>
+      <pose>0 0 0 0 0 0</pose>
+    </include>
+
+    <!-- 180deg 2D LiDAR mounted at the front. -->
+    <include>
+      <uri>model://hokuyo_180_ros</uri>
+      <name>front_lidar</name>
+      <pose>0.18 0 0.12 0 0 0</pose>
+    </include>
+    <joint name="lidar_mount" type="fixed">
+      <parent>iris_demo::iris::base_link</parent>
+      <child>front_lidar::lidar_link</child>
+    </joint>
+
+    <!-- Front-facing ROS camera mounted at the front. -->
+    <include>
+      <uri>model://front_camera_ros</uri>
+      <name>front_camera</name>
+      <pose>0.22 0 0.10 0 0 0</pose>
+    </include>
+    <joint name="camera_mount" type="fixed">
+      <parent>iris_demo::iris::base_link</parent>
+      <child>front_camera::front_camera_link</child>
+    </joint>
+  </model>
+</sdf>

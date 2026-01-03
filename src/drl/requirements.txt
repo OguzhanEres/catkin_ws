@@ -1,0 +1,14 @@
+# ROS core libs (rospy, cv_bridge, mavros_msgs, sensor_msgs, etc.) come from your ROS Noetic installation via apt, not pip.
+# Install ROS Noetic first, source /opt/ros/noetic/setup.bash, then use pip for the below.
+
+numpy
+pyqt5
+pyqtgraph
+matplotlib
+opencv-contrib-python   # needed for KCF/CSRT trackers
+stable-baselines3
+torch
+torchvision
+gymnasium               # SB3 dependency
+rospkg                  # helpful for ROS Python tooling (pip-installable)
+catkin_pkg              # helpful for ROS package metadata (pip-installable)

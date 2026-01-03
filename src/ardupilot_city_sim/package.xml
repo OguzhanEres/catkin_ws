@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>ardupilot_city_sim</name>
+  <version>0.1.0</version>
+  <description>ArduPilot + Gazebo city simulation environment with lidar and camera payload.</description>
+  <maintainer email="oguz@example.com">oguz</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>gazebo_msgs</depend>
+  <depend>gazebo_ros</depend>
+
+  <exec_depend>mavros</exec_depend>
+</package>

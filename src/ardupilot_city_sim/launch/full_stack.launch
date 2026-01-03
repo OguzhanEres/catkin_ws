@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="start_gazebo" default="true"/>
+
+  <include file="$(find ardupilot_city_sim)/launch/city_sim_gazebo.launch" if="$(arg start_gazebo)">
+    <arg name="gui" value="$(arg gazebo_gui)"/>
+  </include>
+
+  <include file="$(find ardupilot_city_sim)/launch/mavros_connect.launch"/>
+
+  <include file="$(find drl)/launch/drl_infra.launch"/>
+</launch>

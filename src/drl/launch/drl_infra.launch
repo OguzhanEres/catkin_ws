@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<launch>
+  <node pkg="drl" type="sensor_vectorizer_node.py" name="sensor_vectorizer" output="screen">
+    <param name="lidar_topic" value="/scan"/>
+    <param name="camera_topic" value="/front_camera/image_raw"/>
+    <param name="imu_topic" value="/mavros/imu/data"/>
+    <param name="gps_topic" value="/mavros/global_position/global"/>
+    <param name="lidar_bins" value="180"/>
+    <param name="lidar_fov_deg" value="180.0"/>
+    <param name="lidar_front_center_deg" value="0.0"/>
+    <param name="camera_width" value="32"/>
+    <param name="camera_height" value="24"/>
+  </node>
+  <node pkg="drl" type="ppo_lstm_agent_node.py" name="ppo_lstm_agent" output="screen">
+    <param name="lidar_vec_topic" value="/agent/lidar_vec"/>
+    <param name="camera_vec_topic" value="/agent/camera_vec"/>
+    <param name="imu_vec_topic" value="/agent/imu_vec"/>
+    <param name="gyro_vec_topic" value="/agent/gyro_vec"/>
+    <param name="gps_vec_topic" value="/agent/gps_vec"/>
+    <param name="mode_topic" value="/agent/mode"/>
+    <param name="frame_id" value="local_enu"/>
+    <param name="route_length" value="6"/>
+    <param name="step_size" value="1.0"/>
+    <param name="action_dim" value="3"/>
+    <param name="hidden_size" value="128"/>
+    <param name="lstm_layers" value="1"/>
+    <param name="device" value="cpu"/>
+  </node>
+  <node pkg="drl" type="ifds_smoother_node.py" name="ifds_smoother" output="screen">
+    <param name="alpha" value="0.35"/>
+    <param name="route_in" value="/agent/route_raw"/>
+    <param name="route_out" value="/agent/route_smoothed"/>
+  </node>
+  <node pkg="drl" type="waypoint_manager_node.py" name="waypoint_manager" output="screen">
+    <param name="route_topic" value="/agent/route_smoothed"/>
+    <param name="frame" value="global"/>
+    <param name="acceptance_radius" value="1.0"/>
+    <param name="command" value="16"/>
+    <param name="gps_topic" value="/agent/gps_vec"/>
+  </node>
+</launch>

@@ -1,0 +1,24 @@
+<launch>
+  <!-- ==================== ARGUMENTS ==================== -->
+  <arg name="fcu_url" default="udp://:14550@127.0.0.1:14551"/>
+  <arg name="gazebo_gui" default="true"/>
+  <arg name="start_gazebo" default="true"/>
+
+  <!-- ==================== GAZEBO + QUADCOPTER ==================== -->
+  <include file="$(find drl)/launch/gazebo_quadcopter.launch" if="$(arg start_gazebo)">
+    <arg name="gui" value="$(arg gazebo_gui)"/>
+  </include>
+
+  <!-- ==================== MAVROS ==================== -->
+  <include file="$(find mavros)/launch/apm.launch">
+    <arg name="fcu_url" value="$(arg fcu_url)"/>
+    <arg name="tgt_system" value="1"/>
+    <arg name="tgt_component" value="1"/>
+  </include>
+
+  <!-- ==================== DRL NODES ==================== -->
+  <node pkg="drl" type="tracker_node.py" name="hybrid_tracker" output="screen"/>
+  <node pkg="drl" type="drl_agent_node.py" name="drl_agent" output="screen"/>
+  <node pkg="drl" type="safety_filter_node.py" name="safety_filter" output="screen"/>
+  <node pkg="drl" type="mission_manager.py" name="mission_manager" output="screen"/>
+</launch>
