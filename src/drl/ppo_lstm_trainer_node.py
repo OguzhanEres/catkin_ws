@@ -697,7 +697,39 @@ class PPOLSTMTrainerNode:
     def _build_obs(self) -> Optional[np.ndarray]:
         if not all(v is not None for v in self.latest_vecs.values()):
             return None
+
+        # Get current position and compute direction to target
+        current = self._current_position()
+        if current is None:
+            return None
+
+        # Use local or world target based on pose source
+        if self._using_local_pose():
+            tx, ty, tz = self._target_local
+        else:
+            tx, ty, tz = self._target_world
+
+        # Compute relative vector to target (normalized direction + distance)
+        dx = tx - current[0]
+        dy = ty - current[1]
+        dz = tz - current[2]
+        dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+
+        # Normalize direction vector
+        if dist > 1e-6:
+            dir_x = dx / dist
+            dir_y = dy / dist
+            dir_z = dz / dist
+        else:
+            dir_x, dir_y, dir_z = 0.0, 0.0, 0.0
+
+        # Target info: [dir_x, dir_y, dir_z, normalized_distance]
+        # Normalize distance to roughly [0, 1] range (assuming max_dist ~ 80m)
+        norm_dist = min(dist / self.max_dist, 1.0)
+        target_vec = np.array([dir_x, dir_y, dir_z, norm_dist], dtype=np.float32)
+
         parts = [
+            target_vec,  # 4 values: direction to target + normalized distance
             self.latest_vecs["lidar"],
             self.latest_vecs["camera"],
             self.latest_vecs["imu"],
@@ -859,6 +891,13 @@ class PPOLSTMTrainerNode:
                     with torch.no_grad():
                         action_t, logp_t, value_t, self.hidden = self.model.act_step(obs_t, self.hidden, self.mode)
                     action = action_t.cpu().numpy()
+
+                    # Add strong bias toward target direction (first 3 elements of obs are target direction)
+                    # During early training, mostly follow target direction
+                    target_bias = 0.8  # Strong bias toward target (0.8 = 80% target, 20% policy)
+                    target_dir = obs[:3]  # dir_x, dir_y, dir_z from observation
+                    # Blend policy action with target direction
+                    action[:3] = (1.0 - target_bias) * action[:3] + target_bias * target_dir
 
                     route = self._build_route(action)
                     self.route_pub.publish(route)
