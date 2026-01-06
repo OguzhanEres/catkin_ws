@@ -1,13 +1,13 @@
-# Proje Çalıştırma Kılavuzu (ROS Noetic + Gazebo 11 + ArduPilot SITL + DRL PPO+LSTM)
+# Proje Çalıştırma Kılavuzu (ROS Noetic + Gazebo 11 + PX4 SITL + DRL PPO+LSTM)
 
-Bu doküman, şehir simülasyonu (Gazebo 11) + ArduPilot SITL + MAVROS + DRL (PPO+LSTM + IFDS) sistemini uçtan uca çalıştırmak için gerekli komutları ve kullanım adımlarını içerir.
+Bu doküman, şehir simülasyonu (Gazebo 11) + PX4 SITL + MAVROS + DRL (PPO+LSTM + IFDS) sistemini uçtan uca çalıştırmak için gerekli komutları ve kullanım adımlarını içerir.
 
 ## 0) Ön Koşullar
 
 - Ubuntu 20.04 + ROS Noetic + Gazebo 11
-- `catkin_ws` çalışma alanı: `/home/oguz/catkin_ws`
-- ArduPilot SITL: `/home/oguz/ardupilot`
-- ArduPilot Gazebo plugin: `/home/oguz/ardupilot_gazebo` (build edilmiş olmalı)
+- `catkin_ws` çalışma alanı: `/home/oguz/Desktop/catkin_ws`
+- PX4 SITL: `/home/oguz/PX4-Autopilot`
+- PX4 Gazebo pluginleri: `/home/oguz/PX4-Autopilot/build/px4_sitl_default/build_gazebo` (build edilmiş olmalı)
 
 Bu repo/workspace içinde iki ROS paketi vardır:
 - `ardupilot_city_sim` (şehir world + model/sensörler + GUI)
@@ -17,9 +17,9 @@ Bu repo/workspace içinde iki ROS paketi vardır:
 
 ```bash
 source /opt/ros/noetic/setup.bash
-cd ~/catkin_ws
+cd ~/Desktop/catkin_ws
 catkin_make
-source ~/catkin_ws/devel/setup.bash
+source ~/Desktop/catkin_ws/devel/setup.bash
 ```
 
 ## 2) Sistem Mimarisi (Kısa)
@@ -47,7 +47,7 @@ Sensör ve kontrol veri akışı:
   - `/agent/route_raw` → `/agent/route_smoothed`
 - `setpoint_follower_node.py` (tam DRL loop kontrol katmanı):
   - `/agent/route_smoothed`’daki ilk hedefi alır
-  - `/mavros/setpoint_position/local` yayınlayarak GUIDED modda setpoint sürer
+  - `/mavros/setpoint_position/local` yayınlayarak OFFBOARD modda setpoint sürer
   - hedefe ulaşınca `/agent/wp_reached` yayınlar
 
 ## 3) Terminal ile Çalıştırma (Önerilen Debug Akışı)
@@ -55,33 +55,35 @@ Sensör ve kontrol veri akışı:
 ### Terminal A — Gazebo (şehir world)
 ```bash
 source /opt/ros/noetic/setup.bash
-source ~/catkin_ws/devel/setup.bash
+source ~/Desktop/catkin_ws/devel/setup.bash
 roslaunch ardupilot_city_sim city_sim_gazebo.launch
 ```
 
-### Terminal B — ArduPilot SITL (ArduCopter)
-Önerilen: param override ile başlat (SITL için)
+### Terminal B — PX4 SITL (Sadece SITL, Gazebo başlatmadan)
 ```bash
-cd ~/ardupilot/ArduCopter
-../Tools/autotest/sim_vehicle.py -v ArduCopter -f gazebo-iris -I0 \
-  --out=127.0.0.1:14550 \
-  --add-param-file=$HOME/catkin_ws/src/ardupilot_city_sim/config/ardupilot_override.parm
+cd ~/PX4-Autopilot
+export PX4_SIM_MODEL=iris
+export PX4_SIM_HOST_ADDR=127.0.0.1
+./build/px4_sitl_default/bin/px4 ./build/px4_sitl_default/etc \
+  -s etc/init.d-posix/rcS -t ./test_data
 ```
 
-> Not: Bu komut MAVProxy’yi de açar ve ArduCopter terminalini ayrı pencerede çalıştırır.
+> Not: Gazebo zaten Terminal A’da çalışıyor olmalı. Bu komut sadece PX4 SITL başlatır.
 
 ### Terminal C — MAVROS bağlantısı
 ```bash
 source /opt/ros/noetic/setup.bash
-source ~/catkin_ws/devel/setup.bash
-roslaunch ardupilot_city_sim mavros_connect.launch
+source ~/Desktop/catkin_ws/devel/setup.bash
+roslaunch ardupilot_city_sim mavros_connect.launch fcu_url:=udp://:14540@127.0.0.1:14580
 ```
 
 ### Terminal D — DRL Training (tam DRL loop)
 ```bash
 source /opt/ros/noetic/setup.bash
-source ~/catkin_ws/devel/setup.bash
-roslaunch drl drl_train.launch mode:=exploration epochs:=10000 step_size:=10.0 takeoff_alt:=2.0
+source ~/Desktop/catkin_ws/devel/setup.bash
+roslaunch drl drl_train.launch mode:=exploration epochs:=10 \
+  step_size:=1.0 takeoff_alt:=1.0 min_alt_for_control:=0.0 \
+  reset_world:=true reboot_wait:=30
 ```
 
 Parametre notları:
@@ -97,8 +99,8 @@ rostopic echo /rosout | grep "Epoch "
 
 Checkpoint:
 ```bash
-ls -l ~/catkin_ws/src/drl/models/ppo_lstm_checkpoint.pt
-stat ~/catkin_ws/src/drl/models/ppo_lstm_checkpoint.pt
+ls -l ~/Desktop/catkin_ws/src/drl/models/ppo_lstm_checkpoint.pt
+stat ~/Desktop/catkin_ws/src/drl/models/ppo_lstm_checkpoint.pt
 ```
 
 Drone durumu:
@@ -109,11 +111,11 @@ rostopic echo -n 1 /mavros/local_position/pose
 
 ## 4) GUI ile Çalıştırma
 
-GUI, Gazebo/ArduPilot/MAVROS/training launch işlemlerini butonlarla tetiklemek için vardır.
+GUI, Gazebo/PX4/MAVROS/training launch işlemlerini butonlarla tetiklemek için vardır.
 
 ```bash
 source /opt/ros/noetic/setup.bash
-source ~/catkin_ws/devel/setup.bash
+source ~/Desktop/catkin_ws/devel/setup.bash
 rosrun ardupilot_city_sim sim_control_gui.py
 ```
 
@@ -126,11 +128,12 @@ Notlar:
 ### ROS launch’ları durdurma
 Her launch terminalinde `Ctrl+C`.
 
-### ArduPilot/MAVProxy süreçlerini kapatma
+### PX4 süreçlerini kapatma
 ```bash
-pkill -f sim_vehicle.py
-pkill -f mavproxy.py
-pkill -f arducopter
+pkill -f px4
+pkill -f gazebo
+pkill -f gzserver
+pkill -f gzclient
 ```
 
 ### Mission temizleme (MAVROS açıkken)
@@ -140,11 +143,15 @@ rosservice call /mavros/mission/clear "{}"
 
 ## 6) Sık Görülen Sorunlar ve Çözümler
 
-### 6.1 “Arming rejected / Takeoff rejected”
-Genellikle EKF/GPS hazır değilken olur.
-- SITL başladıktan sonra 10–20 sn bekleyin.
-- `drl_train.launch` içinde **preflight gate** aktif: Trainer, `PreArm:`/`EKF` hataları varken arm/takeoff denemez.
-- `/mavros/statustext/recv` ile PreArm mesajlarını kontrol edin:
+### 6.1 “OFFBOARD’a geçmiyor / AUTO.RTL’e düşüyor”
+Genellikle setpoint akışı kesildiğinde veya RC failsafe tetiklendiğinde olur.
+- `/mavros/setpoint_position/local` akışı >10 Hz olmalı.
+- PX4 terminalinde şu paramlar eğitim için önerilir:
+  - `COM_RCL_EXCEPT=4`
+  - `NAV_RCL_ACT=0`
+  - `COM_OBL_ACT=0`
+  - `COM_LOW_BAT_ACT=0`
+- `/mavros/statustext/recv` ile failsafe mesajlarını kontrol edin:
 ```bash
 rostopic echo /mavros/statustext/recv
 ```
@@ -158,10 +165,38 @@ Setpoint agresif veya EKF kararsız:
 Bazı koşullarda `/mavros/local_position/pose` z negatif görülebilir.
 Kontrol katmanı bu durumu otomatik algılayıp güvenli hedef üretmeye çalışır.
 
+### 6.4 `/mavros/local_position/pose` akmıyor (EKF xy_valid=false)
+PX4, güvenli yaw/pozisyon olmadığında LOCAL_POSITION_NED yayınlamaz → OFFBOARD/arming reddedilir. Gazebo pozunu EKF’ye beslemek için `drl_train.launch` içinde varsayılan olarak `gazebo_vision_bridge` açıldı. Bu node `/gazebo/model_states` → `/mavros/vision_pose/pose` (ve hız) yayınlayarak EKF’nin xy_valid/yaw referansını sağlamlaştırır.
+- Çalıştığını doğrulamak için: `rostopic echo -n 1 /mavros/local_position/pose` ve PX4 terminalinde `listener vehicle_local_position`.
+- Donanım testlerinde gerekirse kapatın: `roslaunch drl drl_train.launch use_vision_bridge:=false ...`.
+
 ## 7) Önemli Dosyalar
 
-- Şehir world: `~/catkin_ws/src/ardupilot_city_sim/worlds/city_sim.world`
-- Drone model (plugin + sensör): `~/catkin_ws/src/ardupilot_city_sim/models/iris_with_lidar_camera_ros/`
-- ArduPilot param override: `~/catkin_ws/src/ardupilot_city_sim/config/ardupilot_override.parm`
-- DRL launch: `~/catkin_ws/src/drl/launch/drl_train.launch`
-- DRL checkpoint: `~/catkin_ws/src/drl/models/ppo_lstm_checkpoint.pt`
+- Şehir world: `~/Desktop/catkin_ws/src/ardupilot_city_sim/worlds/city_sim.world`
+- Drone model (plugin + sensör): `~/Desktop/catkin_ws/src/ardupilot_city_sim/models/iris_with_lidar_camera_px4/`
+- DRL launch: `~/Desktop/catkin_ws/src/drl/launch/drl_train.launch`
+- DRL checkpoint: `~/Desktop/catkin_ws/src/drl/models/ppo_lstm_checkpoint.pt`
+source /opt/ros/noetic/setup.bash
+source ~/Desktop/catkin_ws/devel/setup.bash
+roslaunch ardupilot_city_sim city_sim_gazebo.launch
+
+
+cd ~/PX4-Autopilot
+export PX4_SIM_MODEL=iris
+export PX4_SIM_HOST_ADDR=127.0.0.1
+./build/px4_sitl_default/bin/px4 ./build/px4_sitl_default/etc \
+  -s etc/init.d-posix/rcS -t ./test_data
+
+
+source /opt/ros/noetic/setup.bash
+source ~/Desktop/catkin_ws/devel/setup.bash
+roslaunch ardupilot_city_sim mavros_connect.launch fcu_url:=udp://:14540@127.0.0.1:14580
+
+
+source /opt/ros/noetic/setup.bash
+source ~/Desktop/catkin_ws/devel/setup.bash
+roslaunch drl drl_train.launch mode:=exploration epochs:=10 \
+  step_size:=1.0 takeoff_alt:=1.0 min_alt_for_control:=0.0 \
+  reset_world:=true reboot_wait:=30 reboot_each_episode:=true
+# yumuşatma/settle parametreleri eklemek istersen:
+# max_xy_speed:=1.0 max_z_speed:=0.5 target_settle_time:=1.0 require_settle_for_new_target:=true

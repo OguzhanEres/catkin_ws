@@ -2,14 +2,27 @@
 <launch>
   <arg name="mode" default="exploration"/>
   <arg name="epochs" default="10"/>
-  <arg name="step_size" default="6.0"/>
+  <arg name="step_size" default="1.5"/>
   <arg name="takeoff_alt" default="2.0"/>
+  <arg name="use_vision_bridge" default="true"/>
+  <arg name="vision_model_name" default="iris_px4_sensors"/>
+  <arg name="reset_each_epoch" default="false"/>
+  <arg name="auto_arm" default="true"/>
+  <arg name="use_px4_arm_takeoff" default="true"/>
+
+  <!-- PX4 Arm/Takeoff node - runs first to arm and enter OFFBOARD mode -->
+  <node pkg="drl" type="px4_arm_takeoff.py" name="px4_arm_takeoff" output="screen" if="$(arg use_px4_arm_takeoff)">
+    <param name="takeoff_alt" value="$(arg takeoff_alt)"/>
+    <param name="prestream_duration" value="3.0"/>
+    <param name="arm_timeout" value="30.0"/>
+    <param name="setpoint_rate" value="20.0"/>
+  </node>
 
   <node pkg="drl" type="sensor_vectorizer_node.py" name="sensor_vectorizer" output="screen">
     <param name="lidar_topic" value="/scan"/>
     <param name="camera_topic" value="/front_camera/image_raw"/>
     <param name="imu_topic" value="/mavros/imu/data"/>
-    <param name="gps_topic" value="/mavros/global_position/global"/>
+    <param name="gps_topic" value="/mavros/global_position/raw/fix"/>
     <param name="lidar_bins" value="180"/>
     <param name="lidar_fov_deg" value="180.0"/>
     <param name="lidar_front_center_deg" value="0.0"/>
@@ -22,12 +35,12 @@
     <param name="epochs" value="$(arg epochs)"/>
     <param name="loop_forever" value="true"/>
     <param name="checkpoint_path" value="$(find drl)/models/ppo_lstm_checkpoint.pt"/>
-    <param name="auto_param_tune" value="true"/>
+    <param name="auto_param_tune" value="false"/>
     <param name="preflight_gate" value="true"/>
     <param name="preflight_timeout" value="45.0"/>
     <param name="preflight_stable_time" value="2.0"/>
-    <param name="auto_arm" value="true"/>
-    <param name="reset_each_epoch" value="true"/>
+    <param name="auto_arm" value="false"/>
+    <param name="reset_each_epoch" value="$(arg reset_each_epoch)"/>
     <param name="disable_arming_checks" value="false"/>
     <param name="arm_attempts" value="6"/>
     <param name="frame_id" value="local_enu"/>
@@ -38,20 +51,34 @@
     <param name="takeoff_alt" value="$(arg takeoff_alt)"/>
     <param name="send_takeoff_cmd" value="true"/>
     <param name="enforce_guided_only" value="true"/>
+    <param name="required_mode" value="OFFBOARD"/>
+    <param name="offboard_prestream_sec" value="2.0"/>
     <param name="allow_auto_mode" value="false"/>
     <param name="start_auto_after_takeoff" value="false"/>
     <param name="reset_wait" value="1.0"/>
-    <param name="target_x" value="0.0"/>
-    <param name="target_y" value="18.0"/>
-    <param name="target_z" value="1.0"/>
+    <param name="target_x" value="-18.0"/>
+    <param name="target_y" value="-18.0"/>
+    <param name="target_z" value="2.5"/>
     <param name="target_in_world" value="true"/>
-    <param name="goal_radius" value="1.2"/>
+    <param name="goal_radius" value="3.0"/>
     <param name="spawn_x" value="-25.0"/>
     <param name="spawn_y" value="-25.0"/>
     <param name="spawn_z" value="0.1"/>
     <param name="spawn_yaw" value="0.785"/>
-    <param name="model_name" value="iris_with_lidar_camera_ros"/>
+    <param name="model_name" value="$(arg vision_model_name)"/>
   </node>
+
+  <group if="$(arg use_vision_bridge)">
+    <node pkg="drl" type="gazebo_vision_bridge.py" name="gazebo_vision_bridge" output="screen">
+      <param name="model_name" value="$(arg vision_model_name)"/>
+      <param name="frame_id" value="map"/>
+      <param name="pose_topic" value="/mavros/vision_pose/pose"/>
+      <param name="twist_topic" value="/mavros/vision_speed/speed_twist"/>
+      <param name="publish_twist" value="true"/>
+      <param name="publish_odom" value="true"/>
+      <param name="odom_topic" value="/mavros/odometry/in"/>
+    </node>
+  </group>
 
   <node pkg="drl" type="ifds_smoother_node.py" name="ifds_smoother" output="screen">
     <param name="alpha" value="0.35"/>
@@ -67,11 +94,20 @@
     <param name="reached_topic" value="/agent/wp_reached"/>
     <param name="publish_rate" value="20.0"/>
     <param name="frame_id" value="map"/>
+    <param name="force_enu" value="true"/>
     <param name="takeoff_alt" value="$(arg takeoff_alt)"/>
     <param name="max_target_z" value="$(arg takeoff_alt)"/>
-    <param name="max_xy_step" value="3.0"/>
-    <param name="min_alt_for_control" value="1.7"/>
-    <param name="require_armed" value="true"/>
-    <param name="require_guided" value="true"/>
+    <param name="max_xy_step" value="$(arg step_size)"/>
+    <param name="min_alt_for_control" value="0.5"/>
+    <param name="require_armed" value="false"/>
+    <param name="require_guided" value="false"/>
+    <param name="required_mode" value="OFFBOARD"/>
+  </node>
+
+  <node pkg="drl" type="target_marker_node.py" name="target_marker" output="screen" >
+    <param name="model_name" value="target_marker_red"/>
+    <param name="model_path" value="$(find ardupilot_city_sim)/models/target_marker_red/model.sdf"/>
+    <param name="setpoint_topic" value="/mavros/setpoint_position/local"/>
+    <param name="frame_id" value="map"/>
   </node>
 </launch>

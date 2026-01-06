@@ -55,7 +55,10 @@ class SetpointFollowerNode:
         self.min_alt_for_control = float(rospy.get_param("~min_alt_for_control", self.takeoff_alt - 0.3))
         self.require_armed = bool(rospy.get_param("~require_armed", True))
         self.require_guided = bool(rospy.get_param("~require_guided", True))
+        self.required_mode = rospy.get_param("~required_mode", "GUIDED")
         self.use_3d_distance = bool(rospy.get_param("~use_3d_distance", True))
+        self.force_enu = bool(rospy.get_param("~force_enu", False))
+        self.force_ned = bool(rospy.get_param("~force_ned", False))
 
         self.last_pose: Optional[PoseStamped] = None
         self.last_state: Optional[State] = None
@@ -87,10 +90,22 @@ class SetpointFollowerNode:
     def _pose_cb(self, msg: PoseStamped):
         self.last_pose = msg
         z = float(msg.pose.position.z)
-        if z < -0.5:
+        if self.force_enu:
+            self._ned_frame = False
+            self._ned_votes = 0
+            self._enu_votes = 3
+            return
+        if self.force_ned:
+            self._ned_frame = True
+            self._ned_votes = 3
+            self._enu_votes = 0
+            return
+        # Lightweight frame heuristic: small hysteresis so we don't stick to NED
+        # after an early negative reading.
+        if z < -0.1:
             self._ned_votes += 1
             self._enu_votes = max(0, self._enu_votes - 1)
-        elif z > 0.5:
+        elif z > 0.1:
             self._enu_votes += 1
             self._ned_votes = max(0, self._ned_votes - 1)
         if self._ned_votes >= 3:
@@ -107,10 +122,13 @@ class SetpointFollowerNode:
         if self.last_pose is None:
             rospy.logwarn_throttle(2.0, "Pose not ready; skipping route")
             return
-        if self.require_armed and (self.last_state is None or not self.last_state.armed):
-            return
-        if self.require_guided and (self.last_state is None or self.last_state.mode != "GUIDED"):
-            return
+        # Skip armed/guided checks during prestream (before airborne)
+        # This allows setpoint publishing for OFFBOARD mode transition
+        if self._airborne_confirmed:
+            if self.require_armed and (self.last_state is None or not self.last_state.armed):
+                return
+            if self.require_guided and (self.last_state is None or self.last_state.mode != self.required_mode):
+                return
 
         offset_point: Point = msg.poses[0].pose.position
         origin = (
@@ -167,18 +185,20 @@ class SetpointFollowerNode:
     def _tick(self, _event):
         if self.last_pose is None or self.target is None:
             return
-        if self.require_armed and (self.last_state is None or not self.last_state.armed):
-            return
-        if self.require_guided and (self.last_state is None or self.last_state.mode != "GUIDED"):
-            return
-        if not self._airborne_confirmed:
-            z = float(self.last_pose.pose.position.z)
-            ned = bool(self._ned_frame) if self._ned_frame is not None else False
-            alt = abs(z) if ned else z
-            if alt >= self.min_alt_for_control:
-                self._airborne_confirmed = True
-            else:
+        # Always publish setpoint when we have a target - needed for OFFBOARD prestream
+        # Skip armed/guided checks during prestream phase
+        skip_checks = not self._airborne_confirmed
+        if not skip_checks:
+            if self.require_armed and (self.last_state is None or not self.last_state.armed):
                 return
+            if self.require_guided and (self.last_state is None or self.last_state.mode != self.required_mode):
+                return
+        # Update airborne status
+        z = float(self.last_pose.pose.position.z)
+        ned = bool(self._ned_frame) if self._ned_frame is not None else False
+        alt = abs(z) if ned else z
+        if alt >= self.min_alt_for_control:
+            self._airborne_confirmed = True
 
         # Publish setpoint continuously.
         sp = PoseStamped()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Hybrid target detection and tracking node for UAV autonomy (SEARCH / TRACK / REDETECT).
-- Detects with YOLOv8, tracks with OpenCV KCF/CSRT.
+- Detects with YOLOv5, tracks with OpenCV KCF/CSRT.
 - Publishes bbox info on /target/bbox: [cx_norm, cy_norm, distance_m, width_norm, height_norm].
 """
 import threading
@@ -34,9 +34,10 @@ class HybridTrackerNode:
         self.det_model_path = rospy.get_param("~det_model_path", "yolov8n.pt")
         self.tracker_type = rospy.get_param("~tracker_type", "KCF")  # Options: KCF, CSRT
         self.focal_px = rospy.get_param("~focal_px", 525.0)
-        self.target_real_height = rospy.get_param("~target_real_height", 0.3)  # meters; TODO: set per target
+        self.target_real_height = rospy.get_param("~target_real_height", 0.3)
         self.redetect_score_drop = rospy.get_param("~redetect_score_drop", 0.25)
         self.redetect_period = rospy.get_param("~redetect_period", 1.0)
+        self.device = rospy.get_param("~device", "cpu")  # 'cpu' or 'cuda'
 
         self.detector = self._load_detector(self.det_model_path)
         self.tracker = None
@@ -51,10 +52,13 @@ class HybridTrackerNode:
         self.timer = rospy.Timer(rospy.Duration.from_sec(0.05), self._process_frame)  # 20 Hz
 
     def _load_detector(self, model_path: str):
-        # TODO: consider GPU selection and half precision for performance in Gazebo sim.
         try:
-            model = torch.hub.load("ultralytics/yolov5", "custom", path=model_path)  # YOLOv5 stub as placeholder
+            rospy.loginfo(f"Loading YOLOv5 detector from {model_path} on {self.device}...")
+            model = torch.hub.load("ultralytics/yolov5", "custom", path=model_path)
             model.conf = self.det_conf
+            model.to(self.device)
+            if self.device == 'cuda':
+                model.half()  # Use half precision for GPU
             return model
         except Exception as exc:  # pragma: no cover - runtime dependency
             rospy.logerr(f"Failed to load detector: {exc}")

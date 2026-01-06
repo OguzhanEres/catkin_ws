@@ -1,7 +1,7 @@
 # ArduPilot SITL overrides for gazebo-iris
 ARMING_SKIPCHK 0
 ARMING_NEED_LOC 1
-ARMING_CHECK 1
+ARMING_CHECK 0
 # Reduce scheduler loop rate to match typical WSL+Gazebo performance and avoid
 # PreArm "Main loop slow (250Hz < 400Hz)" + gyro-rate prearm warnings.
 SCHED_LOOP_RATE 250
@@ -23,3 +23,9 @@ MAV1_POSITION 10
 MAV1_EXT_STAT 10
 MAV1_EXTRA1 10
 MAV1_EXTRA2 10
+
+LOG_BITMASK 156126
+LOG_FILE_BUFSIZE 100
+LOG_DISARMED 0
+SCHED_LOOP_RATE 200
+# Empty override file (defaults only).

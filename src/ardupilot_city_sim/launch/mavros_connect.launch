@@ -1,12 +1,29 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="fcu_url" default="udp://:14550@127.0.0.1:14550"/>
+  <arg name="fcu_url" default="udp://:14540@127.0.0.1:14557"/>
   <arg name="gcs_url" default=""/>
+  <arg name="pluginlists_yaml" default="$(find mavros)/launch/px4_pluginlists.yaml"/>
+  <arg name="config_yaml" default="$(find mavros)/launch/px4_config.yaml"/>
 
-  <include file="$(find mavros)/launch/apm.launch">
-    <arg name="fcu_url" value="$(arg fcu_url)"/>
-    <arg name="gcs_url" value="$(arg gcs_url)"/>
-    <arg name="tgt_system" value="1"/>
-    <arg name="tgt_component" value="1"/>
-  </include>
+  <!-- Disable timesync BEFORE mavros node starts -->
+  <param name="/mavros/time/timesync_rate" value="0.0"/>
+  <param name="/mavros/time/timesync_mode" value="NONE"/>
+  <param name="/mavros/conn/timeout" value="30.0"/>
+
+  <node pkg="mavros" type="mavros_node" name="mavros" required="true" clear_params="true" output="screen">
+    <param name="fcu_url" value="$(arg fcu_url)"/>
+    <param name="gcs_url" value="$(arg gcs_url)"/>
+    <param name="target_system_id" value="1"/>
+    <param name="target_component_id" value="1"/>
+    <param name="fcu_protocol" value="v2.0"/>
+
+    <!-- Disable timesync completely -->
+    <param name="time/timesync_rate" value="0.0"/>
+    <param name="time/timesync_mode" value="NONE"/>
+    <param name="conn/timeout" value="30.0"/>
+
+    <!-- Load plugin configs -->
+    <rosparam command="load" file="$(arg pluginlists_yaml)"/>
+    <rosparam command="load" file="$(arg config_yaml)"/>
+  </node>
 </launch>

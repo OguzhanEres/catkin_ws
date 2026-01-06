@@ -4,8 +4,12 @@ PPO + LSTM trainer node for Gazebo + ArduPilot.
 Publishes route actions, observes progress toward a fixed target, and updates policy.
 """
 import argparse
+import atexit
+import csv
 import math
 import os
+import signal
+import sys
 import threading
 from typing import Dict, List, Optional, Tuple
 
@@ -121,6 +125,7 @@ class PPOLSTMTrainerNode:
         self.auto_start_mode = rospy.get_param("~auto_start_mode", "AUTO")
         self.start_auto_after_takeoff = bool(rospy.get_param("~start_auto_after_takeoff", True))
         self.enforce_guided_only = bool(rospy.get_param("~enforce_guided_only", True))
+        self.required_mode = rospy.get_param("~required_mode", "GUIDED")
         self.allow_auto_mode = bool(rospy.get_param("~allow_auto_mode", False))
         self.reset_each_epoch = bool(rospy.get_param("~reset_each_epoch", True))
         self.preflight_gate = bool(rospy.get_param("~preflight_gate", True))
@@ -163,6 +168,7 @@ class PPOLSTMTrainerNode:
         self.checkpoint_path = rospy.get_param("~checkpoint_path", "ppo_lstm_checkpoint.pt")
         self.auto_param_tune = bool(rospy.get_param("~auto_param_tune", True))
         self.auto_arm = bool(rospy.get_param("~auto_arm", True))
+        self.offboard_prestream_sec = float(rospy.get_param("~offboard_prestream_sec", 1.0))
 
         self.latest_vecs: Dict[str, Optional[np.ndarray]] = {
             "lidar": None,
@@ -220,6 +226,97 @@ class PPOLSTMTrainerNode:
         self._prearm_bad_until = rospy.Time(0)
         self._last_statustext = ""
         self._last_statustext_stamp = rospy.Time(0)
+
+        # Metrics tracking
+        self._metrics_path = rospy.get_param("~metrics_path", 
+            os.path.join(os.path.dirname(self.checkpoint_path) if self.checkpoint_path else ".", "metrics.csv"))
+        self._epoch_metrics: List[Dict] = []
+        self._current_epoch = 0
+        self._shutdown_requested = False
+        
+        # Register shutdown handlers for graceful exit
+        self._register_shutdown_handlers()
+
+    def _register_shutdown_handlers(self):
+        """Register handlers to save state on shutdown (Ctrl+C, SIGTERM, etc.)"""
+        def _save_on_shutdown(signum=None, frame=None):
+            if self._shutdown_requested:
+                return
+            self._shutdown_requested = True
+            rospy.logwarn("Shutdown signal received, saving state...")
+            self._emergency_save()
+            if signum is not None:
+                sys.exit(0)
+        
+        # Register with atexit for normal exits
+        atexit.register(self._emergency_save)
+        
+        # Register signal handlers
+        signal.signal(signal.SIGINT, _save_on_shutdown)
+        signal.signal(signal.SIGTERM, _save_on_shutdown)
+        
+        # ROS shutdown hook
+        rospy.on_shutdown(self._emergency_save)
+
+    def _emergency_save(self):
+        """Save checkpoint and metrics on emergency shutdown"""
+        try:
+            if self.model is not None and self.checkpoint_path:
+                torch.save(self.model.state_dict(), self.checkpoint_path)
+                rospy.loginfo("Emergency checkpoint saved: %s", self.checkpoint_path)
+        except Exception as e:
+            rospy.logerr("Failed to save emergency checkpoint: %s", e)
+        
+        try:
+            self._save_metrics(force=True)
+        except Exception as e:
+            rospy.logerr("Failed to save emergency metrics: %s", e)
+
+    def _save_metrics(self, force: bool = False):
+        """Save collected metrics to CSV file"""
+        if not self._epoch_metrics and not force:
+            return
+        
+        if not self._metrics_path:
+            return
+            
+        try:
+            # Ensure directory exists
+            metrics_dir = os.path.dirname(self._metrics_path)
+            if metrics_dir:
+                os.makedirs(metrics_dir, exist_ok=True)
+            
+            file_exists = os.path.exists(self._metrics_path)
+            with open(self._metrics_path, 'a', newline='') as f:
+                if self._epoch_metrics:
+                    fieldnames = list(self._epoch_metrics[0].keys())
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    if not file_exists:
+                        writer.writeheader()
+                    writer.writerows(self._epoch_metrics)
+                    rospy.loginfo("Saved %d epoch metrics to %s", len(self._epoch_metrics), self._metrics_path)
+                    self._epoch_metrics = []
+        except Exception as e:
+            rospy.logerr("Failed to save metrics: %s", e)
+
+    def _record_epoch_metrics(self, epoch: int, steps: int, total_reward: float, 
+                              success: bool, final_dist: Optional[float]):
+        """Record metrics for a completed epoch"""
+        import time
+        metrics = {
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'epoch': epoch,
+            'steps': steps,
+            'total_reward': round(total_reward, 4),
+            'success': int(success),
+            'final_distance': round(final_dist, 4) if final_dist else -1,
+            'mode': self.mode,
+        }
+        self._epoch_metrics.append(metrics)
+        
+        # Auto-save every 5 epochs
+        if len(self._epoch_metrics) >= 5:
+            self._save_metrics()
 
     def _resolve_targets(self) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
         target_world = (self.target_x, self.target_y, self.target_z)
@@ -391,6 +488,32 @@ class PPOLSTMTrainerNode:
         except rospy.ServiceException as exc:
             rospy.logwarn("Set mode failed: %s", exc)
 
+    def _prestream_offboard(self):
+        if self.offboard_prestream_sec <= 0.0:
+            return
+        
+        # Wait for EKF to stabilize after reset
+        rospy.sleep(0.5)
+        
+        hold = Path()
+        hold.header.frame_id = self.frame_id
+        pose = PoseStamped()
+        pose.pose.orientation.w = 1.0
+        hold.poses = [pose]
+        end_time = rospy.Time.now() + rospy.Duration.from_sec(self.offboard_prestream_sec)
+        rate = rospy.Rate(20)  # Increased rate for smoother control
+        while not rospy.is_shutdown() and rospy.Time.now() < end_time:
+            stamp = rospy.Time.now()
+            hold.header.stamp = stamp
+            hold.poses[0].header.stamp = stamp
+            hold.poses[0].header.frame_id = hold.header.frame_id
+            # Send zero offset - setpoint follower will interpret as "hold current position"
+            hold.poses[0].pose.position.x = 0.0
+            hold.poses[0].pose.position.y = 0.0
+            hold.poses[0].pose.position.z = self.takeoff_alt  # Target takeoff altitude
+            self.route_pub.publish(hold)
+            rate.sleep()
+
     def _arm(self, value: bool):
         try:
             resp = self.arm_srv(value=value)
@@ -417,8 +540,8 @@ class PPOLSTMTrainerNode:
             if self._current_position() is None:
                 rate.sleep()
                 continue
-            if self.enforce_guided_only and self.last_state.mode != "GUIDED":
-                self._set_mode("GUIDED")
+            if self.enforce_guided_only and self.last_state.mode != self.required_mode:
+                self._set_mode(self.required_mode)
             if rospy.Time.now() <= self._prearm_bad_until:
                 rate.sleep()
                 continue
@@ -448,7 +571,9 @@ class PPOLSTMTrainerNode:
             rospy.logwarn("Reset pose failed: %s", exc)
 
     def _reset_episode(self):
-        arm_mode = "GUIDED"
+        arm_mode = self.required_mode
+        if arm_mode.upper() == "OFFBOARD":
+            self._prestream_offboard()
         if self.auto_param_tune and self.disable_arming_checks:
             self._set_param("ARMING_SKIPCHK", -1)
             self._set_param("ARMING_NEED_LOC", 0)
@@ -659,7 +784,7 @@ class PPOLSTMTrainerNode:
                 os.makedirs(checkpoint_dir, exist_ok=True)
         if self.checkpoint_path and os.path.exists(self.checkpoint_path):
             try:
-                state = torch.load(self.checkpoint_path, map_location=device)
+                state = torch.load(self.checkpoint_path, map_location=device, weights_only=True)
                 self.model.load_state_dict(state)
                 rospy.loginfo("Loaded checkpoint: %s", self.checkpoint_path)
             except Exception as exc:
@@ -680,10 +805,11 @@ class PPOLSTMTrainerNode:
     def train(self):
         self.mode_pub.publish(String(data=self.mode))
         self._wait_ready()
-        self._configure_fcu_params()
-        if self._require_restart:
-            rospy.logerr("GPS config updated. Restart ArduPilot then relaunch training.")
-            return
+        if self.auto_param_tune:
+            self._configure_fcu_params()
+            if self._require_restart:
+                rospy.logerr("GPS config updated. Restart ArduPilot then relaunch training.")
+                return
 
         obs = self._build_obs()
         if obs is None:
@@ -725,8 +851,8 @@ class PPOLSTMTrainerNode:
                         rospy.sleep(0.1)
                         continue
                     if self.enforce_guided_only and self.last_state is not None and self.last_state.armed:
-                        if self.last_state.mode != "GUIDED":
-                            self._set_mode("GUIDED")
+                        if self.last_state.mode != self.required_mode:
+                            self._set_mode(self.required_mode)
                             rospy.sleep(0.2)
                             continue
                     obs_t = torch.from_numpy(obs).float().to(device)
@@ -790,12 +916,30 @@ class PPOLSTMTrainerNode:
 
                 if self.checkpoint_path:
                     torch.save(self.model.state_dict(), self.checkpoint_path)
+                
+                # Record epoch metrics
+                final_dist = self._distance_to_target()
+                success = done_list[-1] if done_list else False
+                if success and final_dist is not None and final_dist <= self.goal_radius:
+                    success = True
+                else:
+                    success = False
+                self._record_epoch_metrics(
+                    epoch=epoch_index,
+                    steps=len(obs_list),
+                    total_reward=float(rewards.sum()),
+                    success=success,
+                    final_dist=final_dist
+                )
+                
                 rospy.loginfo("Epoch %d done, steps=%d, reward=%.2f", epoch_index, len(obs_list), rewards.sum())
 
                 if not self.loop_forever and epoch_index >= self.epochs:
+                    self._save_metrics(force=True)
                     return
 
             if not self.loop_forever:
+                self._save_metrics(force=True)
                 return
 
 

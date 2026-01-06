@@ -1,0 +1,3 @@
+epoch,steps,total_reward,mean_reward,done_count,truncated_count,reset_failed_count,loss,policy_loss,value_loss,entropy_loss,elapsed_sec
+0,1,0.000000,0.000000,1,0,1,,,,,61.26
+0,1,0.000000,0.000000,1,0,1,,,,,47.15

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.0.2)
 project(drl)
 
 find_package(catkin REQUIRED COMPONENTS
+  message_generation
   rospy
   roscpp
   std_msgs
@@ -20,8 +21,23 @@ find_package(catkin REQUIRED COMPONENTS
   mavros_msgs
 )
 
+catkin_python_setup()
+
+add_message_files(
+  FILES
+    Route.msg
+)
+
+generate_messages(
+  DEPENDENCIES
+    std_msgs
+    nav_msgs
+    geometry_msgs
+)
+
 catkin_package(
   CATKIN_DEPENDS
+    message_runtime
     rospy
     roscpp
     std_msgs
@@ -47,6 +63,8 @@ include_directories(
 # Install Python scripts
 catkin_install_python(PROGRAMS
   drl_agent_node.py
+  env_bridge.py
+  gazebo_vision_bridge.py
   sensor_vectorizer_node.py
   ppo_lstm_agent_node.py
   ppo_lstm_trainer_node.py
@@ -57,6 +75,7 @@ catkin_install_python(PROGRAMS
   tracker_node.py
   safety_filter_node.py
   mission_control_dashboard.py
+  target_marker_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -40,7 +40,7 @@
         <ray>
           <scan>
             <horizontal>
-              <samples>180</samples>
+              <samples>90</samples>
               <resolution>1</resolution>
               <min_angle>-1.5708</min_angle>
               <max_angle>1.5708</max_angle>
@@ -57,7 +57,7 @@
           <frameName>lidar_link</frameName>
         </plugin>
         <always_on>1</always_on>
-        <update_rate>10</update_rate>
+        <update_rate>5</update_rate>
         <visualize>false</visualize>
       </sensor>
     </link>

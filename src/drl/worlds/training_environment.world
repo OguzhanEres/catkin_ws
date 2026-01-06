@@ -82,7 +82,7 @@
 
     <!-- ==================== IRIS DRONE WITH ARDUPILOT ==================== -->
     <model name="iris">
-      <pose>-8 -8 0 0 0 0.785</pose>
+      <pose>-8 -8 0.05 0 0 0.785</pose>
       <include>
         <uri>model://iris_with_standoffs_demo</uri>
         <pose>0 0 0 0 0 0</pose>
@@ -272,10 +272,10 @@
     <!-- ==================== LANDING PADS ==================== -->
     <model name="landing_pad_start">
       <static>true</static>
-      <pose>-8 -8 0.01 0 0 0</pose>
+      <pose>-8 -8 0.005 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><cylinder><radius>1</radius><length>0.02</length></cylinder></geometry></collision>
-        <visual name="visual"><geometry><cylinder><radius>1</radius><length>0.02</length></cylinder></geometry>
+        <!-- No collision - visual only to prevent drone bounce -->
+        <visual name="visual"><geometry><cylinder><radius>1</radius><length>0.01</length></cylinder></geometry>
           <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Green</name></script></material>
         </visual>
       </link>
@@ -283,10 +283,10 @@
 
     <model name="landing_pad_goal">
       <static>true</static>
-      <pose>8 8 0.01 0 0 0</pose>
+      <pose>8 8 0.005 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><cylinder><radius>1</radius><length>0.02</length></cylinder></geometry></collision>
-        <visual name="visual"><geometry><cylinder><radius>1</radius><length>0.02</length></cylinder></geometry>
+        <!-- No collision - visual only -->
+        <visual name="visual"><geometry><cylinder><radius>1</radius><length>0.01</length></cylinder></geometry>
           <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Red</name></script></material>
         </visual>
       </link>

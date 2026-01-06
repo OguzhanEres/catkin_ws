@@ -16,7 +16,7 @@
           <contact_surface_layer>0.001</contact_surface_layer>
         </constraints>
       </ode>
-      <real_time_update_rate>400</real_time_update_rate>
+      <real_time_update_rate>250</real_time_update_rate>
       <max_step_size>0.004</max_step_size>
     </physics>
 
@@ -49,7 +49,7 @@
           <geometry>
             <plane>
               <normal>0 0 1</normal>
-              <size>120 120</size>
+              <size>100 100</size>
             </plane>
           </geometry>
           <surface>
@@ -66,7 +66,7 @@
           <geometry>
             <plane>
               <normal>0 0 1</normal>
-              <size>120 120</size>
+              <size>100 100</size>
             </plane>
           </geometry>
           <material>
@@ -79,300 +79,125 @@
       </link>
     </model>
 
-    <include>
-      <uri>model://iris_with_lidar_camera_ros</uri>
-      <pose>-25 -25 0.1 0 0 0.785</pose>
-    </include>
-
-    <!-- Boundary walls -->
+    <!-- Simple boundary walls -->
     <model name="boundary_north">
       <static>true</static>
-      <pose>0 32 3 0 0 0</pose>
+      <pose>0 25 3 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>64 1 6</size></box></geometry></collision>
+        <collision name="collision"><geometry><box><size>50 1 6</size></box></geometry></collision>
         <visual name="visual">
-          <geometry><box><size>64 1 6</size></box></geometry>
+          <geometry><box><size>50 1 6</size></box></geometry>
           <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
         </visual>
       </link>
     </model>
     <model name="boundary_south">
       <static>true</static>
-      <pose>0 -32 3 0 0 0</pose>
+      <pose>0 -30 3 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>64 1 6</size></box></geometry></collision>
+        <collision name="collision"><geometry><box><size>50 1 6</size></box></geometry></collision>
         <visual name="visual">
-          <geometry><box><size>64 1 6</size></box></geometry>
+          <geometry><box><size>50 1 6</size></box></geometry>
           <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
         </visual>
       </link>
     </model>
     <model name="boundary_east">
       <static>true</static>
-      <pose>32 0 3 0 0 1.5708</pose>
+      <pose>25 0 3 0 0 1.5708</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>64 1 6</size></box></geometry></collision>
+        <collision name="collision"><geometry><box><size>56 1 6</size></box></geometry></collision>
         <visual name="visual">
-          <geometry><box><size>64 1 6</size></box></geometry>
+          <geometry><box><size>56 1 6</size></box></geometry>
           <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
         </visual>
       </link>
     </model>
     <model name="boundary_west">
       <static>true</static>
-      <pose>-32 0 3 0 0 1.5708</pose>
+      <pose>-30 0 3 0 0 1.5708</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>64 1 6</size></box></geometry></collision>
+        <collision name="collision"><geometry><box><size>56 1 6</size></box></geometry></collision>
         <visual name="visual">
-          <geometry><box><size>64 1 6</size></box></geometry>
+          <geometry><box><size>56 1 6</size></box></geometry>
           <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
         </visual>
       </link>
     </model>
 
-    <!-- Static city buildings -->
-    <model name="building_nw_1">
+    <!-- Only 3 buildings - simple obstacles -->
+    <!-- Building 1: Between spawn and target -->
+    <model name="building_1">
       <static>true</static>
-      <pose>-20 20 6 0 0 0</pose>
+      <pose>-15 -15 4 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>10 8 12</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>10 8 12</size></box></geometry>
+        <collision name="collision"><geometry><box><size>6 6 8</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>6 6 8</size></box></geometry>
           <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Concrete</name></script></material>
         </visual>
       </link>
     </model>
-    <model name="building_nw_2">
+
+    <!-- Building 2: Another obstacle -->
+    <model name="building_2">
       <static>true</static>
-      <pose>-5 22 8 0 0 0</pose>
+      <pose>-10 -5 5 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>8 6 16</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>8 6 16</size></box></geometry>
+        <collision name="collision"><geometry><box><size>5 8 10</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>5 8 10</size></box></geometry>
           <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/DarkGrey</name></script></material>
         </visual>
       </link>
     </model>
-    <model name="building_ne_1">
-      <static>true</static>
-      <pose>16 20 7 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>12 8 14</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>12 8 14</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Concrete</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="building_w_1">
-      <static>true</static>
-      <pose>-24 0 7 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>6 18 14</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>6 18 14</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="building_e_1">
-      <static>true</static>
-      <pose>24 0 8 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>6 18 16</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>6 18 16</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="building_c_1">
-      <static>true</static>
-      <pose>0 0 10 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>14 10 20</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>14 10 20</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Concrete</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="building_sw_1">
-      <static>true</static>
-      <pose>-10 -8 6 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>10 8 12</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>10 8 12</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/DarkGrey</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="building_se_1">
-      <static>true</static>
-      <pose>10 -8 9 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>12 8 18</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>12 8 18</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Concrete</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="building_s_1">
-      <static>true</static>
-      <pose>0 -22 6 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>14 8 12</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>14 8 12</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="building_s_2">
-      <static>true</static>
-      <pose>-16 -22 5 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>8 6 10</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>8 6 10</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/DarkGrey</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="building_s_3">
-      <static>true</static>
-      <pose>16 -22 7 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>8 6 14</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>8 6 14</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Concrete</name></script></material>
-        </visual>
-      </link>
-    </model>
 
-    <!-- Narrow passage blocks -->
-    <model name="passage_left">
+    <!-- Building 3: Near target -->
+    <model name="building_3">
       <static>true</static>
-      <pose>-8 10 4 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>6 20 8</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>6 20 8</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="passage_right">
-      <static>true</static>
-      <pose>8 10 4 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>6 20 8</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>6 20 8</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- Complex geometry (L-shape) -->
-    <model name="l_wall_1">
-      <static>true</static>
-      <pose>-12 6 2.5 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>8 1 5</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>8 1 5</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/White</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="l_wall_2">
-      <static>true</static>
-      <pose>-8 2 2.5 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>1 8 5</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>1 8 5</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/White</name></script></material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- Small block cluster -->
-    <model name="block_1">
-      <static>true</static>
-      <pose>18 6 2 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>4 4 4</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>4 4 4</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Orange</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="block_2">
-      <static>true</static>
-      <pose>20 12 3 0 0 0</pose>
+      <pose>-5 5 3 0 0 0</pose>
       <link name="link">
         <collision name="collision"><geometry><box><size>4 4 6</size></box></geometry></collision>
         <visual name="visual"><geometry><box><size>4 4 6</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Orange</name></script></material>
+          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
         </visual>
       </link>
     </model>
 
-    <!-- Dynamic obstacles -->
-    <model name="dyn_box_1">
-      <static>false</static>
-      <pose>0 -5 1 0 0 0</pose>
-      <link name="link">
-        <gravity>false</gravity>
-        <collision name="collision"><geometry><box><size>1.5 1.5 2</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>1.5 1.5 2</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Red</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="dyn_box_2">
-      <static>false</static>
-      <pose>12 0 1.5 0 0 0</pose>
-      <link name="link">
-        <gravity>false</gravity>
-        <collision name="collision"><geometry><box><size>1 1 3</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>1 1 3</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Blue</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="dyn_box_3">
-      <static>false</static>
-      <pose>-12 10 1 0 0 0</pose>
-      <link name="link">
-        <gravity>false</gravity>
-        <collision name="collision"><geometry><box><size>1.5 1 2</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>1.5 1 2</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Yellow</name></script></material>
-        </visual>
-      </link>
-    </model>
-    <model name="dyn_box_4">
-      <static>false</static>
-      <pose>8 15 1.5 0 0 0</pose>
-      <link name="link">
-        <gravity>false</gravity>
-        <collision name="collision"><geometry><box><size>1 1 3</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>1 1 3</size></box></geometry>
-          <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Yellow</name></script></material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- Training target -->
+    <!-- Training target - VERY CLOSE to spawn point (-25,-25) -->
+    <!-- New target at (-18, -18, 2.5) - about 10m from spawn -->
     <model name="training_goal">
       <static>true</static>
-      <pose>0 18 1 0 0 0</pose>
+      <pose>-18 -18 2.5 0 0 0</pose>
       <link name="link">
         <collision name="collision">
           <geometry>
-            <sphere><radius>0.4</radius></sphere>
+            <sphere><radius>0.8</radius></sphere>
           </geometry>
         </collision>
         <visual name="visual">
           <geometry>
-            <sphere><radius>0.4</radius></sphere>
+            <sphere><radius>0.8</radius></sphere>
           </geometry>
           <material>
-            <script>
-              <uri>file://media/materials/scripts/gazebo.material</uri>
-              <name>Gazebo/Red</name>
-            </script>
+            <ambient>0 1 0 1</ambient>
+            <diffuse>0 1 0 1</diffuse>
+            <emissive>0 0.5 0 1</emissive>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Goal marker pole for better visibility -->
+    <model name="goal_pole">
+      <static>true</static>
+      <pose>-18 -18 7 0 0 0</pose>
+      <link name="link">
+        <visual name="pole_visual">
+          <geometry>
+            <cylinder><radius>0.15</radius><length>14</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0 1 0 1</ambient>
+            <diffuse>0 1 0 1</diffuse>
           </material>
         </visual>
       </link>
@@ -380,7 +205,7 @@
 
     <gui fullscreen="0">
       <camera name="user_camera">
-        <pose>-40 -40 25 0 0.5 0.8</pose>
+        <pose>-35 -35 20 0 0.5 0.8</pose>
         <view_controller>orbit</view_controller>
       </camera>
     </gui>

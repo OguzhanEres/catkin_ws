@@ -16,7 +16,6 @@ class IFDSSmootherNode:
         self.alpha = float(rospy.get_param("~alpha", 0.35))
         self.route_in = rospy.get_param("~route_in", "/agent/route_raw")
         self.route_out = rospy.get_param("~route_out", "/agent/route_smoothed")
-
         self.sub = rospy.Subscriber(self.route_in, Path, self._route_cb, queue_size=1)
         self.pub = rospy.Publisher(self.route_out, Path, queue_size=1)
 

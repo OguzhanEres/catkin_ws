@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Arguments -->
+  <arg name="vehicle" default="iris"/>
+  <arg name="world" default="$(find drl)/worlds/training_environment.world"/>
+  <arg name="gui" default="true"/>
+  <arg name="debug" default="false"/>
+  <arg name="verbose" default="false"/>
+  <arg name="paused" default="false"/>
+  <arg name="respawn_gazebo" default="false"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="headless" default="false"/>
+
+  <!-- PX4 SITL and Gazebo paths -->
+  <arg name="px4_dir" default="$(env HOME)/PX4-Autopilot"/>
+  <arg name="gazebo_model_path" default="$(arg px4_dir)/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models:$(find drl)/models"/>
+  <arg name="gazebo_plugin_path" default="$(arg px4_dir)/build/px4_sitl_default/build_gazebo-classic"/>
+  <arg name="gazebo_resource_path" default="$(arg px4_dir)/Tools/simulation/gazebo-classic/sitl_gazebo-classic"/>
+
+  <!-- Set environment variables -->
+  <env name="GAZEBO_MODEL_PATH" value="$(arg gazebo_model_path)"/>
+  <env name="GAZEBO_PLUGIN_PATH" value="$(arg gazebo_plugin_path)"/>
+  <env name="GAZEBO_RESOURCE_PATH" value="$(arg gazebo_resource_path)"/>
+  <env name="PX4_SIM_MODEL" value="$(arg vehicle)"/>
+
+  <!-- Use simulation time -->
+  <param name="/use_sim_time" value="$(arg use_sim_time)"/>
+
+  <!-- Start Gazebo with ROS integration -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world)"/>
+    <arg name="debug" value="$(arg debug)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="headless" value="$(arg headless)"/>
+    <arg name="verbose" value="$(arg verbose)"/>
+  </include>
+
+</launch>
