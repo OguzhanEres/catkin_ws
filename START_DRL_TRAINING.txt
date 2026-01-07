@@ -1,0 +1,253 @@
+================================================================================
+DRL UAV NAVIGATION TRAINING - BAŞLATMA KOMUTALRI
+================================================================================
+
+Proje: PX4 SITL + Gazebo + MAVROS + PPO+LSTM DRL Eğitimi
+Hedef: Drone'un LiDAR ve kamera kullanarak hedefe otonom navigasyon öğrenmesi
+
+================================================================================
+ÖNEMLİ NOTLAR
+================================================================================
+
+1. PX4 Parametreleri (İlk kurulumda bir kez ayarlayın):
+   PX4 konsolunda (Terminal 2) şu komutları çalıştırın:
+
+   param set CBRK_SUPPLY_CHK 894281
+   param set BAT1_N_CELLS 0
+   param set BAT1_SOURCE 0
+   param set COM_ARM_WO_GPS 1
+   param set COM_ARM_MAG_ANG 180
+   param set SYS_HAS_BARO 0
+   param set COM_POWER_COUNT 0
+   param set COM_ARM_CHK_ESCS 0
+   param set CBRK_IO_SAFETY 22027
+   param set COM_OF_LOSS_T 60
+   param set COM_OBL_RC_ACT 0
+   param set NAV_RCL_ACT 0
+   param set NAV_DLL_ACT 0
+   param set EKF2_EV_CTRL 15
+   param set EKF2_HGT_REF 3
+   param set EKF2_EV_DELAY 0
+   param set EKF2_EV_POS_X 0
+   param set EKF2_EV_POS_Y 0
+   param set EKF2_EV_POS_Z 0
+   param save
+
+2. Spawn Pozisyonu: (-25, -25, 0.1)
+   Hedef Pozisyonu: (-18, -18, 2.5) - yaklaşık 10m mesafe
+   Goal Radius: 3.0m
+
+3. Model Performansı (son 100 epoch):
+   - Başarı oranı: %94
+   - Ortalama final mesafe: 3.07m
+   - Ortalama step: 9.4
+
+================================================================================
+TERMINAL 1: GAZEBO SİMÜLASYONU
+================================================================================
+
+roslaunch ardupilot_city_sim city_sim_gazebo.launch
+
+
+Açıklama:
+- Gazebo simülasyonunu başlatır
+- city_sim world'ünü yükler (sadeleştirilmiş, 3 bina)
+- Drone modeli (iris_px4_sensors) otomatik spawn edilir
+- LiDAR ve kamera sensörleri aktif
+
+
+================================================================================
+TERMINAL 2: PX4 SITL (Software In The Loop)
+================================================================================
+
+cd ~/PX4-Autopilot/build/px4_sitl_default
+export PX4_SIM_HOST_ADDR=127.0.0.1
+./bin/px4 -s etc/init.d-posix/rcS -w rootfs
+
+
+Açıklama:
+- PX4 flight controller simülasyonunu başlatır
+- Gazebo ile mavlink_interface plugin üzerinden iletişim kurar
+- MAVLink portu: TCP 4560 (Gazebo), UDP 14540 (MAVROS)
+- İlk başlatmada yukarıdaki parametreleri ayarlayın
+
+
+Not: Eğer "PX4 server already running" hatası alırsanız:
+pkill -9 -f px4
+Sonra tekrar başlatın.
+
+
+================================================================================
+TERMINAL 3: MAVROS (MAVLink-ROS Köprüsü)
+================================================================================
+
+roslaunch ardupilot_city_sim mavros_connect.launch fcu_url:="udp://:14540@127.0.0.1:14580"
+
+
+Açıklama:
+- PX4 ile ROS arasında MAVLink iletişimini sağlar
+- Timesync devre dışı (PX4 ile saat senkronizasyonu problemlerini önler)
+- /mavros/* topic'lerini yayınlar (state, pose, sensors, vb.)
+
+
+Kontrol komutları:
+rostopic echo /mavros/state -n 1         # MAVROS bağlantı durumu
+rostopic echo /mavros/local_position/pose -n 1  # Drone pozisyonu
+
+
+================================================================================
+TERMINAL 4: DRL EĞİTİMİ
+================================================================================
+
+roslaunch drl drl_train.launch
+
+
+Açıklama:
+- PPO+LSTM DRL eğitimini başlatır
+- Otomatik arm ve OFFBOARD moda geçiş yapar
+- Sensör verilerini işler (LiDAR, kamera, IMU, GPS)
+- Her epoch'ta metrik kaydeder
+
+
+Node'lar:
+1. px4_arm_takeoff.py      - Otomatik arm/takeoff
+2. sensor_vectorizer_node  - Sensör verilerini vektörize eder
+3. ppo_lstm_trainer_node   - Ana eğitim döngüsü
+4. gazebo_vision_bridge    - Gazebo pose → MAVROS vision pose
+5. ifds_smoother_node      - Route smoothing (IFDS algoritması)
+6. setpoint_follower_node  - Route'u takip eder
+7. target_marker_node      - Hedefe kırmızı marker koyar
+
+
+Eğitim parametreleri:
+- Mode: exploration
+- Target bias: 0.8 (action'ın %80'i hedefe doğru)
+- Epochs: sonsuz (loop_forever=true)
+- Max steps: 120
+- Reset each epoch: false (drone havada kalır)
+
+
+Metrik dosyası:
+~/Desktop/catkin_ws/src/drl/models/metrics.csv
+
+
+Checkpoint:
+~/Desktop/catkin_ws/src/drl/models/ppo_lstm_checkpoint.pt
+
+
+================================================================================
+SORUN GİDERME
+================================================================================
+
+1. "Arming denied: Resolve system health failures"
+   → PX4 konsolunda yukarıdaki parametreleri ayarlayın
+   → Gerekirse: commander arm -f (force arm)
+
+2. "Failsafe activated"
+   → OFFBOARD modda setpoint gelmiyor
+   → COM_OF_LOSS_T parametresini artırın
+
+3. MAVROS bağlanamıyor
+   → PX4'ün çalıştığından emin olun
+   → netstat -tuln | grep 14540 (port açık mı?)
+
+4. Drone yere düşüyor
+   → EKF2 parametreleri doğru ayarlanmamış
+   → Vision pose yayınlanıyor mu kontrol edin:
+     rostopic echo /mavros/vision_pose/pose -n 1
+
+5. Drone hedefe gitmiyor
+   → Target bias düşük olabilir (ppo_lstm_trainer_node.py'de artırın)
+   → Observation'da hedef yönü var mı kontrol edin
+
+6. PX4 yeniden başlatma
+   → PX4 konsolunda: reboot
+   → Veya Terminal 2'de pkill -9 -f px4 sonra yeniden başlatın
+
+
+================================================================================
+ÖNEMLİ DOSYALAR
+================================================================================
+
+Launch dosyaları:
+/home/oguz/Desktop/catkin_ws/src/ardupilot_city_sim/launch/city_sim_gazebo.launch
+/home/oguz/Desktop/catkin_ws/src/ardupilot_city_sim/launch/mavros_connect.launch
+/home/oguz/Desktop/catkin_ws/src/drl/launch/drl_train.launch
+
+Ana kod:
+/home/oguz/Desktop/catkin_ws/src/drl/ppo_lstm_trainer_node.py
+/home/oguz/Desktop/catkin_ws/src/drl/scripts/px4_arm_takeoff.py
+
+World dosyası:
+/home/oguz/Desktop/catkin_ws/src/ardupilot_city_sim/worlds/city_sim.world
+
+Drone modeli:
+/home/oguz/Desktop/catkin_ws/src/ardupilot_city_sim/models/iris_px4_sensors/model.sdf
+
+
+================================================================================
+BAŞARILI EĞİTİM GÖSTERGELERİ
+================================================================================
+
+Terminal 4'te (DRL) şunları görmelisiniz:
+
+[INFO] SUCCESS: Armed and in OFFBOARD mode!
+[INFO] PX4 arm/takeoff complete, exiting
+[INFO] Epoch X done, steps=1, reward=5.xx
+[INFO] Saved 5 epoch metrics to .../metrics.csv
+
+Metrics dosyasında:
+- success=1
+- final_distance < 3.0m
+- total_reward > 4.0
+
+
+PX4 konsolunda:
+INFO  [commander] Armed by external command
+INFO  [commander] Takeoff detected
+
+
+MAVROS state:
+connected: True
+armed: True
+mode: "OFFBOARD"
+
+
+================================================================================
+EĞİTİMİ DURDURMA
+================================================================================
+
+Her terminalde sırasıyla Ctrl+C ile durdurun:
+1. Terminal 4 (DRL) - Önce bunu durdurun
+2. Terminal 3 (MAVROS)
+3. Terminal 2 (PX4)
+4. Terminal 1 (Gazebo) - En son
+
+Model otomatik olarak kaydedilir: ppo_lstm_checkpoint.pt
+
+
+================================================================================
+DEVAM ETME (Checkpoint'ten)
+================================================================================
+
+Aynı komutları kullanın, model otomatik yüklenir:
+[INFO] Loaded checkpoint: .../ppo_lstm_checkpoint.pt
+
+
+================================================================================
+TARGET BIAS AZALTMA (İleri Seviye)
+================================================================================
+
+Model iyi öğrendikten sonra (>%90 başarı), bias'ı azaltabilirsiniz:
+
+ppo_lstm_trainer_node.py dosyasında (satır 865):
+target_bias = 0.8  →  0.6  →  0.4  →  0.2  →  0.0
+
+Bu sayede model kendi stratejisini geliştirir.
+
+
+================================================================================
+SON
+================================================================================
+
+Başarılar! Sorularınız için: https://github.com/anthropics/claude-code/issues
