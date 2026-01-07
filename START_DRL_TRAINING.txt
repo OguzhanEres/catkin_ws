@@ -43,17 +43,38 @@ Hedef: Drone'un LiDAR ve kamera kullanarak hedefe otonom navigasyon öğrenmesi
    - Ortalama step: 9.4
 
 ================================================================================
-TERMINAL 1: GAZEBO SİMÜLASYONU
+TERMINAL 1: GAZEBO SİMÜLASYONU (CURRICULUM LEARNING)
 ================================================================================
 
+CURRICULUM LEARNING MODLARI:
+----------------------------
+
+Stage 1 - BOŞ ORTAM (Kolay):
+roslaunch ardupilot_city_sim curriculum_gazebo.launch stage:=1
+
+Stage 2 - STATİK ENGELLER (Orta):
+roslaunch ardupilot_city_sim curriculum_gazebo.launch stage:=2
+
+Stage 3 - ŞEHİR ORTAMI (Zor):
+roslaunch ardupilot_city_sim curriculum_gazebo.launch stage:=3
+
+
+ESKİ YÖNTEM (doğrudan city_sim):
 roslaunch ardupilot_city_sim city_sim_gazebo.launch
 
 
 Açıklama:
-- Gazebo simülasyonunu başlatır
-- city_sim world'ünü yükler (sadeleştirilmiş, 3 bina)
+- Stage 1: Engel yok, sadece hedefe gitmeyi öğrenir
+- Stage 2: 5 renkli küp engel, kaçınmayı öğrenir
+- Stage 3: 7 bina ile karmaşık şehir ortamı
+- Tüm stage'lerde aynı spawn (-25,-25) ve hedef (-18,-18) noktaları
 - Drone modeli (iris_px4_sensors) otomatik spawn edilir
 - LiDAR ve kamera sensörleri aktif
+
+ÖNERİLEN EĞİTİM SIRASI:
+1. Stage 1'de %90+ başarı oranına ulaşana kadar eğit
+2. Stage 2'ye geç, %80+ başarı oranına ulaşana kadar eğit
+3. Stage 3'e geç, final eğitimi yap
 
 
 ================================================================================

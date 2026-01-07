@@ -3,7 +3,7 @@
   <arg name="mode" default="exploration"/>
   <arg name="epochs" default="10"/>
   <arg name="step_size" default="1.5"/>
-  <arg name="takeoff_alt" default="2.0"/>
+  <arg name="takeoff_alt" default="3.0"/>
   <arg name="use_vision_bridge" default="true"/>
   <arg name="vision_model_name" default="iris_px4_sensors"/>
   <arg name="reset_each_epoch" default="false"/>
@@ -56,8 +56,8 @@
     <param name="allow_auto_mode" value="false"/>
     <param name="start_auto_after_takeoff" value="false"/>
     <param name="reset_wait" value="1.0"/>
-    <param name="target_x" value="-18.0"/>
-    <param name="target_y" value="-18.0"/>
+    <param name="target_x" value="20.0"/>
+    <param name="target_y" value="20.0"/>
     <param name="target_z" value="2.5"/>
     <param name="target_in_world" value="true"/>
     <param name="goal_radius" value="3.0"/>

@@ -33,6 +33,7 @@ class Target:
     origin: Tuple[float, float, float]
     offset: Tuple[float, float, float]
     absolute: Tuple[float, float, float]
+    orientation: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)  # x, y, z, w quaternion
     reached_sent: bool = False
 
 
@@ -138,6 +139,16 @@ class SetpointFollowerNode:
         )
         offset = (float(offset_point.x), float(offset_point.y), float(offset_point.z))
 
+        # Check current altitude - don't allow XY movement if too low (prevents ground collision)
+        ned = bool(self._ned_frame) if self._ned_frame is not None else False
+        current_alt = abs(origin[2]) if ned else origin[2]
+        min_safe_alt = self.takeoff_alt - 0.5  # Need to be at least this high for XY movement
+
+        if current_alt < min_safe_alt:
+            # Drone too low - only allow vertical movement (climb), no XY
+            rospy.logwarn_throttle(1.0, "Drone too low (%.2fm < %.2fm), blocking XY movement", current_alt, min_safe_alt)
+            offset = (0.0, 0.0, offset[2])  # Zero out XY, keep Z
+
         # Clamp XY magnitude to reduce aggressive tilts.
         xy_norm = math.sqrt(offset[0] * offset[0] + offset[1] * offset[1])
         if self.max_xy_step > 0.0 and xy_norm > self.max_xy_step:
@@ -159,7 +170,15 @@ class SetpointFollowerNode:
         else:
             absolute = (absolute[0], absolute[1], desired_alt)
 
-        self.target = Target(origin=origin, offset=offset, absolute=absolute, reached_sent=False)
+        # Get orientation from route (drone should face movement direction)
+        route_orientation = msg.poses[0].pose.orientation
+        orientation = (
+            float(route_orientation.x),
+            float(route_orientation.y),
+            float(route_orientation.z),
+            float(route_orientation.w),
+        )
+        self.target = Target(origin=origin, offset=offset, absolute=absolute, orientation=orientation, reached_sent=False)
         rospy.loginfo_throttle(
             1.0,
             "New target: origin=(%.2f,%.2f,%.2f) offset=(%.2f,%.2f,%.2f) abs=(%.2f,%.2f,%.2f)",
@@ -207,7 +226,11 @@ class SetpointFollowerNode:
         sp.pose.position.x = float(self.target.absolute[0])
         sp.pose.position.y = float(self.target.absolute[1])
         sp.pose.position.z = float(self.target.absolute[2])
-        sp.pose.orientation.w = 1.0
+        # Use orientation from route so drone faces movement direction
+        sp.pose.orientation.x = float(self.target.orientation[0])
+        sp.pose.orientation.y = float(self.target.orientation[1])
+        sp.pose.orientation.z = float(self.target.orientation[2])
+        sp.pose.orientation.w = float(self.target.orientation[3])
         self.setpoint_pub.publish(sp)
 
         current = (

@@ -111,14 +111,15 @@ class PPOLSTMTrainerNode:
         self.mode = rospy.get_param("~mode", args.mode)
         self.epochs = int(rospy.get_param("~epochs", args.epochs))
         self.loop_forever = bool(rospy.get_param("~loop_forever", False))
-        self.max_steps = int(rospy.get_param("~max_steps", 120))
+        # LSTM needs longer episodes to learn temporal patterns (500-1000 steps)
+        self.max_steps = int(rospy.get_param("~max_steps", 500))
         self.update_epochs = int(rospy.get_param("~update_epochs", 5))
-        self.gamma = float(rospy.get_param("~gamma", 0.98))
+        self.gamma = float(rospy.get_param("~gamma", 0.99))  # Increased for longer episodes
         self.gae_lambda = float(rospy.get_param("~gae_lambda", 0.95))
         self.clip_ratio = float(rospy.get_param("~clip_ratio", 0.2))
-        self.lr = float(rospy.get_param("~lr", 3e-4))
+        self.lr = float(rospy.get_param("~lr", 1e-4))  # Reduced for stability
         self.value_coef = float(rospy.get_param("~value_coef", 0.5))
-        self.entropy_coef = float(rospy.get_param("~entropy_coef", 0.01))
+        self.entropy_coef = float(rospy.get_param("~entropy_coef", 0.05))  # Increased for exploration
         self.step_timeout = float(rospy.get_param("~step_timeout", 4.0))
         self.use_reached_event = bool(rospy.get_param("~use_reached_event", True))
         self.pose_timeout = float(rospy.get_param("~pose_timeout", 1.0))
@@ -134,26 +135,59 @@ class PPOLSTMTrainerNode:
         self.disable_arming_checks = bool(rospy.get_param("~disable_arming_checks", False))
         self.arm_attempts = int(rospy.get_param("~arm_attempts", 6))
 
-        self.target_x = float(rospy.get_param("~target_x", 0.0))
-        self.target_y = float(rospy.get_param("~target_y", 18.0))
+        self.target_x = float(rospy.get_param("~target_x", 20.0))
+        self.target_y = float(rospy.get_param("~target_y", 20.0))
         self.target_z = float(rospy.get_param("~target_z", 1.0))
         self.target_in_world = bool(rospy.get_param("~target_in_world", True))
         self.goal_radius = float(rospy.get_param("~goal_radius", 1.2))
-        self.step_penalty = float(rospy.get_param("~step_penalty", 0.02))
-        self.progress_scale = float(rospy.get_param("~progress_scale", 1.0))
-        self.success_bonus = float(rospy.get_param("~success_bonus", 5.0))
-        self.crash_penalty = float(rospy.get_param("~crash_penalty", -5.0))
-        self.min_alt = float(rospy.get_param("~min_alt", 0.1))
-        self.max_dist = float(rospy.get_param("~max_dist", 80.0))
+        self.step_penalty = float(rospy.get_param("~step_penalty", 0.01))  # Small existence penalty
+        self.progress_scale = float(rospy.get_param("~progress_scale", 10.0))  # Increased for better signal
+        self.success_bonus = float(rospy.get_param("~success_bonus", 100.0))  # Large reward for success
+        self.crash_penalty = float(rospy.get_param("~crash_penalty", -50.0))  # Large penalty for crash
+        self.timeout_penalty = float(rospy.get_param("~timeout_penalty", -10.0))  # Penalty for timeout
+        self.min_alt = float(rospy.get_param("~min_alt", 0.3))  # Minimum safe altitude
+        self.max_dist = float(rospy.get_param("~max_dist", 100.0))  # Max distance before out of bounds
+        self.collision_distance = float(rospy.get_param("~collision_distance", 0.5))  # LIDAR collision threshold
 
         self.spawn_x = float(rospy.get_param("~spawn_x", -25.0))
         self.spawn_y = float(rospy.get_param("~spawn_y", -25.0))
         self.spawn_z = float(rospy.get_param("~spawn_z", 0.1))
         self.spawn_yaw = float(rospy.get_param("~spawn_yaw", 0.785))
-        self.model_name = rospy.get_param("~model_name", "iris_with_lidar_camera")
+        self.model_name = rospy.get_param("~model_name", "iris_px4_sensors")
         self.takeoff_alt = float(rospy.get_param("~takeoff_alt", 2.0))
         self.send_takeoff_cmd = bool(rospy.get_param("~send_takeoff_cmd", False))
         self.reset_wait = float(rospy.get_param("~reset_wait", 1.0))
+
+        # === SAFE SPAWN & EPISODE LENGTH FIX ===
+        # Minimum distance to goal at spawn (prevents instant success)
+        self.min_goal_dist_at_spawn = float(rospy.get_param("~min_goal_dist_at_spawn", 10.0))
+        # Minimum LIDAR clearance at spawn (prevents spawning inside obstacles)
+        self.min_lidar_clearance = float(rospy.get_param("~min_lidar_clearance", 2.0))
+        # Maximum spawn attempts before using default position
+        self.max_spawn_attempts = int(rospy.get_param("~max_spawn_attempts", 10))
+        # Random spawn area (for curriculum learning)
+        self.random_spawn = bool(rospy.get_param("~random_spawn", False))
+        self.spawn_area_x = tuple(rospy.get_param("~spawn_area_x", [-30.0, -20.0]))
+        self.spawn_area_y = tuple(rospy.get_param("~spawn_area_y", [-30.0, -20.0]))
+        # Curriculum level (0=easy, 1=medium, 2=hard)
+        self.curriculum_level = int(rospy.get_param("~curriculum_level", 0))
+        # Frame stacking for temporal information
+        self.frame_stack_size = int(rospy.get_param("~frame_stack_size", 1))
+        # Reward normalization/clipping
+        self.reward_clip = float(rospy.get_param("~reward_clip", 10.0))
+        self.use_reward_normalization = bool(rospy.get_param("~use_reward_normalization", True))
+        # Running reward stats for normalization
+        self._reward_mean = 0.0
+        self._reward_var = 1.0
+        self._reward_count = 0
+        # Frame stack buffer
+        self._frame_buffer: List[np.ndarray] = []
+        # Curriculum learning tracking
+        self._curriculum_success_count = 0
+        self._curriculum_episode_count = 0
+        self._curriculum_success_threshold = 0.7  # 70% success rate to advance
+        self._curriculum_window = 20  # Episodes to evaluate
+        self._curriculum_successes_window: List[bool] = []
 
         self.route_length = int(rospy.get_param("~route_length", 1))
         self.step_size = float(rospy.get_param("~step_size", 1.0))
@@ -299,7 +333,7 @@ class PPOLSTMTrainerNode:
         except Exception as e:
             rospy.logerr("Failed to save metrics: %s", e)
 
-    def _record_epoch_metrics(self, epoch: int, steps: int, total_reward: float, 
+    def _record_epoch_metrics(self, epoch: int, steps: int, total_reward: float,
                               success: bool, final_dist: Optional[float]):
         """Record metrics for a completed epoch"""
         import time
@@ -311,9 +345,12 @@ class PPOLSTMTrainerNode:
             'success': int(success),
             'final_distance': round(final_dist, 4) if final_dist else -1,
             'mode': self.mode,
+            'curriculum_level': self.curriculum_level,
+            'goal_radius': self.goal_radius,
+            'min_lidar_dist': round(self._get_min_lidar_distance() or -1, 4),
         }
         self._epoch_metrics.append(metrics)
-        
+
         # Auto-save every 5 epochs
         if len(self._epoch_metrics) >= 5:
             self._save_metrics()
@@ -549,14 +586,237 @@ class PPOLSTMTrainerNode:
         rospy.logwarn("Preflight gate timeout. Last status: %s", self._last_statustext)
         return False
 
+    def _get_min_lidar_distance(self) -> Optional[float]:
+        """Get minimum distance from LIDAR readings (obstacle clearance check)."""
+        lidar = self.latest_vecs.get("lidar")
+        if lidar is None:
+            return None
+        # LIDAR values are normalized to [0, 1], multiply by max range (typically 10-30m)
+        # Assuming max range of 10m for safety check
+        lidar_max_range = 10.0
+        min_normalized = float(np.min(lidar))
+        return min_normalized * lidar_max_range
+
+    def _compute_goal_distance_at_position(self, x: float, y: float, z: float) -> float:
+        """Compute distance to goal from a given position."""
+        if self.target_in_world:
+            tx, ty, tz = self.target_x, self.target_y, self.target_z
+        else:
+            tx = self.target_x + self.spawn_x
+            ty = self.target_y + self.spawn_y
+            tz = self.target_z + self.spawn_z
+        dx = x - tx
+        dy = y - ty
+        dz = z - tz
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
+
+    def _generate_safe_spawn_position(self) -> Tuple[float, float, float, float]:
+        """
+        Generate a safe spawn position that:
+        1. Is at least min_goal_dist_at_spawn meters from the goal
+        2. Has at least min_lidar_clearance meters from obstacles
+
+        Returns: (x, y, z, yaw) spawn position
+        """
+        import random
+
+        # Default position as fallback
+        default_pos = (self.spawn_x, self.spawn_y, self.spawn_z, self.spawn_yaw)
+
+        if not self.random_spawn:
+            # Check if default position meets minimum goal distance
+            goal_dist = self._compute_goal_distance_at_position(
+                self.spawn_x, self.spawn_y, self.takeoff_alt
+            )
+            if goal_dist < self.min_goal_dist_at_spawn:
+                rospy.logwarn(
+                    "Default spawn (%.1f, %.1f) is only %.1fm from goal (min: %.1fm). "
+                    "Consider adjusting spawn_x/spawn_y or target position.",
+                    self.spawn_x, self.spawn_y, goal_dist, self.min_goal_dist_at_spawn
+                )
+            return default_pos
+
+        # Try random positions
+        for attempt in range(self.max_spawn_attempts):
+            # Generate random position within spawn area
+            x = random.uniform(self.spawn_area_x[0], self.spawn_area_x[1])
+            y = random.uniform(self.spawn_area_y[0], self.spawn_area_y[1])
+            z = self.spawn_z
+            yaw = random.uniform(0, 2 * math.pi)
+
+            # Check goal distance
+            goal_dist = self._compute_goal_distance_at_position(x, y, self.takeoff_alt)
+            if goal_dist < self.min_goal_dist_at_spawn:
+                rospy.logdebug(
+                    "Spawn attempt %d: (%.1f, %.1f) too close to goal (%.1fm)",
+                    attempt + 1, x, y, goal_dist
+                )
+                continue
+
+            # Position is valid
+            rospy.loginfo(
+                "Safe spawn found at (%.1f, %.1f) after %d attempts, goal_dist=%.1fm",
+                x, y, attempt + 1, goal_dist
+            )
+            return (x, y, z, yaw)
+
+        rospy.logwarn(
+            "Could not find safe spawn after %d attempts. Using default position.",
+            self.max_spawn_attempts
+        )
+        return default_pos
+
+    def _check_spawn_safety(self) -> bool:
+        """
+        Check if current spawn position is safe (LIDAR clearance).
+        Must be called AFTER spawning and waiting for sensor data.
+        Returns True if safe, False otherwise.
+        """
+        min_dist = self._get_min_lidar_distance()
+        if min_dist is None:
+            rospy.logwarn("LIDAR data not available for spawn safety check")
+            return True  # Assume safe if no data
+
+        if min_dist < self.min_lidar_clearance:
+            rospy.logwarn(
+                "Spawn position unsafe: LIDAR min distance %.2fm < clearance %.2fm",
+                min_dist, self.min_lidar_clearance
+            )
+            return False
+
+        rospy.logdebug("Spawn safety check passed: min LIDAR distance %.2fm", min_dist)
+        return True
+
+    # =========================================================================
+    # CURRICULUM LEARNING
+    # =========================================================================
+    def _get_curriculum_config(self) -> Dict:
+        """
+        Get configuration for current curriculum level.
+
+        Level 0 (Easy): No obstacles, learn basic navigation
+        Level 1 (Medium): Static obstacles, learn avoidance
+        Level 2 (Hard): City environment, full challenge
+
+        IMPORTANT: Long episodes (500+ steps) are needed for LSTM to learn
+        temporal patterns and develop coherent navigation strategies.
+        """
+        configs = {
+            0: {  # EASY - Learn basic navigation (Stage 1 world)
+                "name": "Easy (No obstacles)",
+                "goal_radius": 3.0,           # Large goal area for easy success
+                "max_dist": 150.0,            # Very tolerant bounds
+                "max_steps": 800,             # Long episodes for 63m distance
+                "min_goal_dist": 60.0,        # ~63m from spawn (-25,-25) to goal (20,20)
+                "collision_distance": 0.3,    # Only crash on direct hit
+                "success_bonus": 100.0,       # Big reward for reaching goal
+                "crash_penalty": -30.0,       # Moderate crash penalty
+                "timeout_penalty": -5.0,      # Small timeout penalty
+                "target_bias": 0.8,           # Strong guidance toward goal
+                "progress_scale": 10.0,       # Good progress signal
+            },
+            1: {  # MEDIUM - Learn obstacle avoidance (Stage 2 world)
+                "name": "Medium (Static obstacles)",
+                "goal_radius": 2.5,           # Medium goal area
+                "max_dist": 150.0,            # Tolerant bounds for long distance
+                "max_steps": 800,             # Long episodes for 63m distance
+                "min_goal_dist": 60.0,        # ~63m distance
+                "collision_distance": 0.5,    # Standard collision
+                "success_bonus": 100.0,       # Same success reward
+                "crash_penalty": -50.0,       # Harder crash penalty
+                "timeout_penalty": -10.0,     # Moderate timeout penalty
+                "target_bias": 0.5,           # Less guidance, more autonomy
+                "progress_scale": 10.0,
+            },
+            2: {  # HARD - Full challenge (Stage 3 city world)
+                "name": "Hard (City environment)",
+                "goal_radius": 2.0,           # Precise goal required
+                "max_dist": 150.0,            # Tolerant bounds
+                "max_steps": 1000,            # Longer for complex navigation
+                "min_goal_dist": 60.0,        # ~63m distance
+                "collision_distance": 0.5,    # Standard collision
+                "success_bonus": 100.0,       # Same success reward
+                "crash_penalty": -50.0,       # Full crash penalty
+                "timeout_penalty": -15.0,     # Higher timeout penalty
+                "target_bias": 0.2,           # Minimal guidance, full autonomy
+                "progress_scale": 10.0,
+            },
+        }
+        return configs.get(self.curriculum_level, configs[2])
+
+    def _apply_curriculum_config(self):
+        """Apply current curriculum level configuration."""
+        config = self._get_curriculum_config()
+
+        self.goal_radius = config["goal_radius"]
+        self.max_dist = config["max_dist"]
+        self.max_steps = config["max_steps"]
+        self.min_goal_dist_at_spawn = config["min_goal_dist"]
+        self.success_bonus = config["success_bonus"]
+        self.crash_penalty = config["crash_penalty"]
+        self.timeout_penalty = config["timeout_penalty"]
+        self.collision_distance = config["collision_distance"]
+        self.progress_scale = config["progress_scale"]
+
+        rospy.loginfo(
+            "=== Curriculum Level %d: %s ===",
+            self.curriculum_level, config["name"]
+        )
+        rospy.loginfo(
+            "  goal_radius=%.1f, max_steps=%d, collision_dist=%.1f",
+            config["goal_radius"], config["max_steps"], config["collision_distance"]
+        )
+        rospy.loginfo(
+            "  rewards: success=%.0f, crash=%.0f, timeout=%.0f, target_bias=%.1f",
+            config["success_bonus"], config["crash_penalty"],
+            config["timeout_penalty"], config["target_bias"]
+        )
+
+    def _update_curriculum(self, success: bool):
+        """
+        Update curriculum based on recent performance.
+        Advances to harder level if success rate is high enough.
+        """
+        self._curriculum_successes_window.append(success)
+
+        # Keep window size limited
+        if len(self._curriculum_successes_window) > self._curriculum_window:
+            self._curriculum_successes_window.pop(0)
+
+        # Check if we have enough data
+        if len(self._curriculum_successes_window) < self._curriculum_window:
+            return
+
+        # Calculate success rate
+        success_rate = sum(self._curriculum_successes_window) / len(self._curriculum_successes_window)
+
+        # Check for advancement
+        if success_rate >= self._curriculum_success_threshold:
+            if self.curriculum_level < 2:  # Max level is 2
+                self.curriculum_level += 1
+                self._curriculum_successes_window = []  # Reset window
+                self._apply_curriculum_config()
+                rospy.logwarn(
+                    "=== CURRICULUM ADVANCED TO LEVEL %d! Success rate: %.1f%% ===",
+                    self.curriculum_level, success_rate * 100
+                )
+
+    def _get_target_bias(self) -> float:
+        """Get target bias based on curriculum level."""
+        config = self._get_curriculum_config()
+        return config.get("target_bias", 0.5)
+
     def _reset_pose(self):
+        # Generate safe spawn position
+        spawn_x, spawn_y, spawn_z, spawn_yaw = self._generate_safe_spawn_position()
+
         state = ModelState()
         state.model_name = self.model_name
-        state.pose.position.x = self.spawn_x
-        state.pose.position.y = self.spawn_y
-        state.pose.position.z = self.spawn_z
-        qz = math.sin(self.spawn_yaw * 0.5)
-        qw = math.cos(self.spawn_yaw * 0.5)
+        state.pose.position.x = spawn_x
+        state.pose.position.y = spawn_y
+        state.pose.position.z = spawn_z
+        qz = math.sin(spawn_yaw * 0.5)
+        qw = math.cos(spawn_yaw * 0.5)
         state.pose.orientation.z = qz
         state.pose.orientation.w = qw
         state.twist.linear.x = 0.0
@@ -567,6 +827,13 @@ class PPOLSTMTrainerNode:
         state.twist.angular.z = 0.0
         try:
             self.set_state_srv(state)
+            # Update spawn position for target calculations
+            self.spawn_x = spawn_x
+            self.spawn_y = spawn_y
+            self.spawn_z = spawn_z
+            self.spawn_yaw = spawn_yaw
+            # Recalculate target positions
+            self._target_local, self._target_world = self._resolve_targets()
         except rospy.ServiceException as exc:
             rospy.logwarn("Reset pose failed: %s", exc)
 
@@ -610,7 +877,21 @@ class PPOLSTMTrainerNode:
                     self._set_mode(arm_mode)
                     rospy.sleep(0.2)
                 self._takeoff(self.takeoff_alt)
-                rospy.sleep(1.0)
+                rospy.sleep(0.5)
+                # Wait for drone to reach takeoff altitude before sending any movement setpoints
+                rospy.loginfo("Waiting for drone to reach takeoff altitude (%.1fm)...", self.takeoff_alt)
+                takeoff_deadline = rospy.Time.now() + rospy.Duration(15.0)
+                while not rospy.is_shutdown() and rospy.Time.now() < takeoff_deadline:
+                    pos = self._current_position()
+                    if pos is not None:
+                        alt = pos[2] if pos[2] >= 0.0 else -pos[2]
+                        if alt >= self.takeoff_alt - 0.3:
+                            rospy.loginfo("Takeoff altitude reached: %.2fm", alt)
+                            break
+                    rospy.sleep(0.2)
+                # Extra stabilization time after reaching altitude
+                rospy.loginfo("Stabilizing for 3 seconds...")
+                rospy.sleep(3.0)
 
             if self.allow_auto_mode and self.start_auto_after_takeoff:
                 deadline = rospy.Time.now() + rospy.Duration(10.0)
@@ -694,7 +975,8 @@ class PPOLSTMTrainerNode:
                 return True
         return False
 
-    def _build_obs(self) -> Optional[np.ndarray]:
+    def _build_single_obs(self) -> Optional[np.ndarray]:
+        """Build a single observation frame (without stacking)."""
         if not all(v is not None for v in self.latest_vecs.values()):
             return None
 
@@ -738,6 +1020,40 @@ class PPOLSTMTrainerNode:
         ]
         return np.concatenate(parts).astype(np.float32)
 
+    def _reset_frame_buffer(self):
+        """Reset the frame buffer for a new episode."""
+        self._frame_buffer = []
+
+    def _build_obs(self) -> Optional[np.ndarray]:
+        """
+        Build observation with optional frame stacking.
+        Frame stacking helps the agent understand temporal dynamics
+        (e.g., velocity of moving obstacles).
+        """
+        single_obs = self._build_single_obs()
+        if single_obs is None:
+            return None
+
+        if self.frame_stack_size <= 1:
+            return single_obs
+
+        # Add to frame buffer
+        self._frame_buffer.append(single_obs)
+
+        # Keep buffer at correct size
+        while len(self._frame_buffer) > self.frame_stack_size:
+            self._frame_buffer.pop(0)
+
+        # If buffer not full yet, pad with copies of current frame
+        if len(self._frame_buffer) < self.frame_stack_size:
+            padding = [single_obs] * (self.frame_stack_size - len(self._frame_buffer))
+            frames = padding + self._frame_buffer
+        else:
+            frames = self._frame_buffer
+
+        # Stack frames along feature dimension
+        return np.concatenate(frames).astype(np.float32)
+
     def _distance_to_target(self) -> Optional[float]:
         current = self._current_position()
         if current is None:
@@ -761,6 +1077,13 @@ class PPOLSTMTrainerNode:
         else:
             direction = direction / norm
 
+        # Calculate yaw angle from movement direction (so drone faces forward)
+        # LIDAR is front 180 degrees, so drone nose should point in movement direction
+        yaw = math.atan2(direction[1], direction[0])
+        # Convert yaw to quaternion (rotation around Z axis)
+        qz = math.sin(yaw * 0.5)
+        qw = math.cos(yaw * 0.5)
+
         path = Path()
         path.header.stamp = rospy.Time.now()
         path.header.frame_id = self.frame_id
@@ -774,7 +1097,11 @@ class PPOLSTMTrainerNode:
             if self.max_route_z > 0.0:
                 z = max(-self.max_route_z, min(self.max_route_z, z))
             pose.pose.position.z = z
-            pose.pose.orientation.w = 1.0
+            # Set orientation so drone faces movement direction
+            pose.pose.orientation.x = 0.0
+            pose.pose.orientation.y = 0.0
+            pose.pose.orientation.z = qz
+            pose.pose.orientation.w = qw
             path.poses.append(pose)
         return path
 
@@ -785,25 +1112,120 @@ class PPOLSTMTrainerNode:
         else:
             rospy.sleep(self.step_timeout)
 
-    def _compute_reward(self, prev_dist: float) -> Tuple[float, bool]:
+    def _update_reward_stats(self, reward: float):
+        """Update running mean and variance for reward normalization."""
+        self._reward_count += 1
+        delta = reward - self._reward_mean
+        self._reward_mean += delta / self._reward_count
+        delta2 = reward - self._reward_mean
+        self._reward_var += delta * delta2
+
+    def _normalize_reward(self, reward: float) -> float:
+        """Normalize reward using running statistics and clip."""
+        if not self.use_reward_normalization:
+            return np.clip(reward, -self.reward_clip, self.reward_clip)
+
+        # Update statistics
+        self._update_reward_stats(reward)
+
+        # Normalize (avoid division by zero)
+        if self._reward_count > 1:
+            std = math.sqrt(self._reward_var / (self._reward_count - 1))
+            if std > 1e-8:
+                reward = (reward - self._reward_mean) / std
+
+        # Clip to prevent extreme values
+        return float(np.clip(reward, -self.reward_clip, self.reward_clip))
+
+    def _compute_reward(self, prev_dist: float, step_count: int) -> Tuple[float, bool, str]:
+        """
+        Compute reward following proper RL episode structure.
+
+        Episode terminates (done=True) ONLY when:
+        1. SUCCESS: UAV reaches goal (distance < goal_radius)
+        2. CRASH: UAV collides with obstacle (LIDAR < collision_distance)
+        3. OUT_OF_BOUNDS: UAV flies too far or too low
+        4. TIMEOUT: Episode exceeds max_steps (handled in training loop)
+
+        Returns: (reward, done, termination_reason)
+        """
         dist = self._distance_to_target()
         if dist is None:
-            return 0.0, False
-        reward = (prev_dist - dist) * self.progress_scale - self.step_penalty
-        done = False
-        if dist <= self.goal_radius:
-            reward += self.success_bonus
-            done = True
-        if dist >= self.max_dist:
-            reward += self.crash_penalty
-            done = True
+            return 0.0, False, ""
+
         current = self._current_position()
+        min_lidar_dist = self._get_min_lidar_distance()
+
+        reward = 0.0
+        done = False
+        termination_reason = ""
+
+        # =====================================================================
+        # EPISODE TERMINATION CONDITIONS (done = True)
+        # =====================================================================
+
+        # --- CONDITION 1: SUCCESS - Reached the goal ---
+        if dist <= self.goal_radius:
+            reward = self.success_bonus
+            done = True
+            termination_reason = "SUCCESS"
+            rospy.loginfo("SUCCESS! Reached goal in %d steps. Distance: %.2fm", step_count, dist)
+            return reward, done, termination_reason
+
+        # --- CONDITION 2: COLLISION - Hit an obstacle ---
+        if min_lidar_dist is not None and min_lidar_dist < self.collision_distance:
+            reward = self.crash_penalty
+            done = True
+            termination_reason = "COLLISION"
+            rospy.logwarn("COLLISION! LIDAR min distance: %.2fm at step %d", min_lidar_dist, step_count)
+            return reward, done, termination_reason
+
+        # --- CONDITION 3: OUT OF BOUNDS - Too far from goal ---
+        if dist >= self.max_dist:
+            reward = self.crash_penalty
+            done = True
+            termination_reason = "OUT_OF_BOUNDS"
+            rospy.logwarn("OUT OF BOUNDS! Distance %.2fm exceeds max %.2fm at step %d",
+                         dist, self.max_dist, step_count)
+            return reward, done, termination_reason
+
+        # --- CONDITION 4: ALTITUDE CRASH - Too low ---
         if current:
             alt = current[2] if current[2] >= 0.0 else -current[2]
             if alt < self.min_alt:
-                reward += self.crash_penalty
+                reward = self.crash_penalty
                 done = True
-        return reward, done
+                termination_reason = "ALTITUDE_CRASH"
+                rospy.logwarn("ALTITUDE CRASH! Alt: %.2fm below min %.2fm at step %d",
+                             alt, self.min_alt, step_count)
+                return reward, done, termination_reason
+
+        # =====================================================================
+        # DENSE REWARD SHAPING (episode continues)
+        # =====================================================================
+
+        # --- 1. PROGRESS REWARD (most important) ---
+        # Positive if moving toward goal, negative if moving away
+        progress = (prev_dist - dist) * self.progress_scale
+        reward += progress
+
+        # --- 2. EXISTENCE PENALTY (encourages faster completion) ---
+        # Small negative reward per step to encourage efficiency
+        reward -= self.step_penalty
+
+        # --- 3. OBSTACLE PROXIMITY PENALTY (safety signal) ---
+        # Gradual penalty as UAV gets closer to obstacles
+        if min_lidar_dist is not None:
+            warning_distance = 2.0  # Start warning below this
+            if min_lidar_dist < warning_distance:
+                # Linear penalty: closer = worse
+                proximity_penalty = (warning_distance - min_lidar_dist) * 0.5
+                reward -= proximity_penalty
+
+        # Clip reward to prevent extreme values
+        reward = float(np.clip(reward, -self.reward_clip, self.reward_clip))
+
+        return reward, done, termination_reason
 
     def _init_model(self, obs_dim: int):
         device = torch.device(self.device_name)
@@ -862,12 +1284,21 @@ class PPOLSTMTrainerNode:
                     return
 
                 if self.reset_each_epoch:
+                    # Apply curriculum configuration before reset
+                    self._apply_curriculum_config()
+                    self._reset_frame_buffer()
                     self._reset_episode()
                     if not self._wait_until_airborne(30.0):
                         rospy.logwarn("Episode start failed (not airborne). Retrying next epoch.")
                         continue
+                    # Check spawn safety after sensors are ready
+                    rospy.sleep(0.5)  # Wait for LIDAR data
+                    if not self._check_spawn_safety():
+                        rospy.logwarn("Unsafe spawn detected, will retry with new position next epoch")
+                        # Don't continue here - let the episode run, agent will learn from it
                 else:
                     self._reset_hidden()
+                    self._reset_frame_buffer()
                 obs_list: List[np.ndarray] = []
                 action_list: List[np.ndarray] = []
                 logp_list: List[float] = []
@@ -876,8 +1307,13 @@ class PPOLSTMTrainerNode:
                 done_list: List[bool] = []
 
                 prev_dist = self._distance_to_target() or 0.0
+                step_count = 0
+                termination_reason = ""
 
-                for _ in range(self.max_steps):
+                # =====================================================================
+                # EPISODE LOOP - Runs until done condition or max_steps (TIMEOUT)
+                # =====================================================================
+                for step_count in range(1, self.max_steps + 1):
                     obs = self._build_obs()
                     if obs is None or self.model is None or self.hidden is None:
                         rospy.sleep(0.1)
@@ -892,9 +1328,9 @@ class PPOLSTMTrainerNode:
                         action_t, logp_t, value_t, self.hidden = self.model.act_step(obs_t, self.hidden, self.mode)
                     action = action_t.cpu().numpy()
 
-                    # Add strong bias toward target direction (first 3 elements of obs are target direction)
-                    # During early training, mostly follow target direction
-                    target_bias = 0.8  # Strong bias toward target (0.8 = 80% target, 20% policy)
+                    # Add bias toward target direction based on curriculum level
+                    # Early training: strong guidance, later: more autonomy
+                    target_bias = self._get_target_bias()
                     target_dir = obs[:3]  # dir_x, dir_y, dir_z from observation
                     # Blend policy action with target direction
                     action[:3] = (1.0 - target_bias) * action[:3] + target_bias * target_dir
@@ -903,7 +1339,8 @@ class PPOLSTMTrainerNode:
                     self.route_pub.publish(route)
                     self._wait_step()
 
-                    reward, done = self._compute_reward(prev_dist)
+                    # Compute reward with step count for logging
+                    reward, done, termination_reason = self._compute_reward(prev_dist, step_count)
                     dist = self._distance_to_target() or prev_dist
                     prev_dist = dist
 
@@ -914,8 +1351,25 @@ class PPOLSTMTrainerNode:
                     reward_list.append(float(reward))
                     done_list.append(bool(done))
 
+                    # Log progress every 50 steps
+                    if step_count % 50 == 0:
+                        rospy.loginfo("Epoch %d Step %d/%d: dist=%.2f, reward=%.2f",
+                                     epoch_index, step_count, self.max_steps, dist, reward)
+
                     if done:
                         break
+
+                # =====================================================================
+                # TIMEOUT HANDLING - Episode didn't terminate naturally
+                # =====================================================================
+                if not done_list or not done_list[-1]:
+                    # Episode ended due to max_steps timeout
+                    termination_reason = "TIMEOUT"
+                    final_reward = self.timeout_penalty
+                    reward_list[-1] = float(reward_list[-1]) + final_reward
+                    done_list[-1] = True
+                    rospy.logwarn("TIMEOUT! Episode %d exceeded %d steps. Final distance: %.2fm",
+                                 epoch_index, self.max_steps, prev_dist)
 
                 if self.model is None or self.optimizer is None or not obs_list:
                     continue
@@ -955,14 +1409,14 @@ class PPOLSTMTrainerNode:
 
                 if self.checkpoint_path:
                     torch.save(self.model.state_dict(), self.checkpoint_path)
-                
+
                 # Record epoch metrics
                 final_dist = self._distance_to_target()
-                success = done_list[-1] if done_list else False
-                if success and final_dist is not None and final_dist <= self.goal_radius:
-                    success = True
-                else:
-                    success = False
+                success = termination_reason == "SUCCESS"
+
+                # Update curriculum learning based on success
+                self._update_curriculum(success)
+
                 self._record_epoch_metrics(
                     epoch=epoch_index,
                     steps=len(obs_list),
@@ -970,8 +1424,12 @@ class PPOLSTMTrainerNode:
                     success=success,
                     final_dist=final_dist
                 )
-                
-                rospy.loginfo("Epoch %d done, steps=%d, reward=%.2f", epoch_index, len(obs_list), rewards.sum())
+
+                # Detailed epoch summary
+                rospy.loginfo("=== Epoch %d Complete ===", epoch_index)
+                rospy.loginfo("  Result: %s | Steps: %d | Reward: %.2f | Final Dist: %.2fm",
+                             termination_reason, len(obs_list), rewards.sum(),
+                             final_dist if final_dist else -1)
 
                 if not self.loop_forever and epoch_index >= self.epochs:
                     self._save_metrics(force=True)

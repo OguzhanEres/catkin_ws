@@ -15,7 +15,7 @@ class GazeboVisionBridge:
     def __init__(self):
         rospy.init_node("gazebo_vision_bridge", anonymous=False)
 
-        self.model_name = rospy.get_param("~model_name", "iris_with_lidar_camera_px4")
+        self.model_name = rospy.get_param("~model_name", "iris_px4_sensors")
         self.frame_id = rospy.get_param("~frame_id", "map")
         self.pose_topic = rospy.get_param("~pose_topic", "/mavros/vision_pose/pose")
         self.twist_topic = rospy.get_param("~twist_topic", "/mavros/vision_speed/speed_twist")

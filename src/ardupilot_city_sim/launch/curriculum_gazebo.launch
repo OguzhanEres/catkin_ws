@@ -1,0 +1,93 @@
+<?xml version="1.0"?>
+<launch>
+  <!--
+  ================================================================================
+  CURRICULUM LEARNING - GAZEBO LAUNCHER
+  ================================================================================
+
+  Usage:
+    Stage 1 (Empty):     roslaunch ardupilot_city_sim curriculum_gazebo.launch stage:=1
+    Stage 2 (Obstacles): roslaunch ardupilot_city_sim curriculum_gazebo.launch stage:=2
+    Stage 3 (City):      roslaunch ardupilot_city_sim curriculum_gazebo.launch stage:=3
+
+  ================================================================================
+  -->
+
+  <!-- Curriculum stage selection (1, 2, or 3) -->
+  <arg name="stage" default="1"/>
+
+  <!-- World file selection based on stage -->
+  <arg name="world_stage1" default="$(find ardupilot_city_sim)/worlds/curriculum_stage1_empty.world"/>
+  <arg name="world_stage2" default="$(find ardupilot_city_sim)/worlds/curriculum_stage2_obstacles.world"/>
+  <arg name="world_stage3" default="$(find ardupilot_city_sim)/worlds/curriculum_stage3_city.world"/>
+
+  <!-- Common parameters (same as city_sim_gazebo.launch) -->
+  <arg name="gui" default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="enable_dynamic_obstacles" default="false"/>
+  <arg name="spawn_iris" default="true"/>
+
+  <!-- Drone model (exactly same as city_sim_gazebo.launch) -->
+  <arg name="iris_model_path" default="$(find ardupilot_city_sim)/models/iris_px4_sensors/model.sdf"/>
+  <arg name="iris_model_name" default="iris_px4_sensors"/>
+
+  <!-- Spawn position (same for all stages) -->
+  <arg name="iris_x" default="-25.0"/>
+  <arg name="iris_y" default="-25.0"/>
+  <arg name="iris_z" default="0.2"/>
+
+  <!-- Environment variables (exactly same as city_sim_gazebo.launch) -->
+  <env name="GAZEBO_MODEL_PATH"
+       value="$(find ardupilot_city_sim)/models:$(env HOME)/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models:/usr/share/gazebo-11/models"/>
+  <env name="GAZEBO_RESOURCE_PATH"
+       value="$(find ardupilot_city_sim)/worlds:/usr/share/gazebo-11"/>
+  <env name="GAZEBO_PLUGIN_PATH"
+       value="$(env HOME)/PX4-Autopilot/build/px4_sitl_default/build_gazebo-classic:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:/opt/ros/noetic/lib"/>
+
+  <param name="use_sim_time" value="$(arg use_sim_time)"/>
+
+  <!-- Store current stage as ROS parameter for other nodes -->
+  <param name="curriculum_stage" value="$(arg stage)"/>
+
+  <!-- Launch Gazebo with Stage 1 world -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch" if="$(eval arg('stage') == 1)">
+    <arg name="world_name" value="$(arg world_stage1)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="verbose" value="false"/>
+  </include>
+
+  <!-- Launch Gazebo with Stage 2 world -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch" if="$(eval arg('stage') == 2)">
+    <arg name="world_name" value="$(arg world_stage2)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="verbose" value="false"/>
+  </include>
+
+  <!-- Launch Gazebo with Stage 3 world -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch" if="$(eval arg('stage') == 3)">
+    <arg name="world_name" value="$(arg world_stage3)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="verbose" value="false"/>
+  </include>
+
+  <!-- Spawn drone (exactly same as city_sim_gazebo.launch) -->
+  <group if="$(arg spawn_iris)">
+    <node pkg="gazebo_ros" type="spawn_model" name="spawn_iris"
+          args="-sdf -file $(arg iris_model_path) -model $(arg iris_model_name) -x $(arg iris_x) -y $(arg iris_y) -z $(arg iris_z)"
+          output="screen"/>
+  </group>
+
+  <!-- Dynamic obstacles (optional, same as city_sim_gazebo.launch) -->
+  <group if="$(arg enable_dynamic_obstacles)">
+    <node pkg="ardupilot_city_sim" type="dynamic_obstacle_controller.py"
+          name="dynamic_obstacle_controller" output="screen"/>
+  </group>
+
+</launch>
