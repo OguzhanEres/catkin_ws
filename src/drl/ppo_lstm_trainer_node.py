@@ -170,12 +170,12 @@ class PPOLSTMTrainerNode:
         self.spawn_z = float(rospy.get_param("~spawn_z", 0.1))
         self.spawn_yaw = float(rospy.get_param("~spawn_yaw", 0.785))
         self.model_name = rospy.get_param("~model_name", "iris_px4_sensors")
-        self.takeoff_alt = float(rospy.get_param("~takeoff_alt", 2.0))
+        self.takeoff_alt = float(rospy.get_param("~takeoff_alt", 1.0))
         self.send_takeoff_cmd = bool(rospy.get_param("~send_takeoff_cmd", False))
         self.reset_wait = float(rospy.get_param("~reset_wait", 1.0))
         # Minimum altitude threshold before DRL starts sending movement commands
         # e.g., if takeoff_alt=3.0, min_takeoff_check_alt=1.5 means wait until drone reaches 1.5m
-        self.min_takeoff_check_alt = float(rospy.get_param("~min_takeoff_check_alt", 1.5))
+        self.min_takeoff_check_alt = float(rospy.get_param("~min_takeoff_check_alt", 0.5))
 
         # === SAFE SPAWN & EPISODE LENGTH FIX ===
         # Minimum distance to goal at spawn (prevents instant success)
@@ -1442,6 +1442,18 @@ class PPOLSTMTrainerNode:
             rospy.loginfo("TIMEOUT! %d steps reached. Goals this episode: %d",
                          step_count, self._goals_reached_this_episode)
             return reward, done, termination_reason
+
+        # --- CONDITION 5: DRIFT_EXCEEDED - Too far from spawn (Safety Net) ---
+        # Prevents agent from wandering off and making learning impossible
+        if not in_warmup:
+            drift_dist = self._distance_to_spawn()
+            if drift_dist is not None and drift_dist > self.max_drift_distance:
+                reward = self.crash_penalty
+                done = True
+                termination_reason = "DRIFT_EXCEEDED"
+                rospy.logwarn("DRIFT_EXCEEDED! %.1fm > %.1fm limit. Forcing respawn.",
+                             drift_dist, self.max_drift_distance)
+                return reward, done, termination_reason
 
         # =====================================================================
         # CARROT (HAVUÇ): INTERMEDIATE GOAL REACHED - Generate New Target
