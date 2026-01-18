@@ -49,6 +49,7 @@
     <param name="step_timeout" value="1.0"/>
     <param name="use_z_action" value="false"/>
     <param name="takeoff_alt" value="$(arg takeoff_alt)"/>
+    <param name="min_takeoff_check_alt" value="1.5"/>
     <param name="send_takeoff_cmd" value="true"/>
     <param name="enforce_guided_only" value="true"/>
     <param name="required_mode" value="OFFBOARD"/>
@@ -56,16 +57,30 @@
     <param name="allow_auto_mode" value="false"/>
     <param name="start_auto_after_takeoff" value="false"/>
     <param name="reset_wait" value="1.0"/>
-    <param name="target_x" value="20.0"/>
-    <param name="target_y" value="20.0"/>
-    <param name="target_z" value="2.5"/>
+    <!-- Initial target closer to spawn for easier early learning -->
+    <!-- Spawn at (-25,-25), target at (-15,-15) = ~14m distance -->
+    <param name="target_x" value="-15.0"/>
+    <param name="target_y" value="-15.0"/>
+    <param name="target_z" value="3.0"/>
     <param name="target_in_world" value="true"/>
-    <param name="goal_radius" value="3.0"/>
+    <!-- Larger goal radius for easier success -->
+    <param name="goal_radius" value="5.0"/>
     <param name="spawn_x" value="-25.0"/>
     <param name="spawn_y" value="-25.0"/>
     <param name="spawn_z" value="0.1"/>
     <param name="spawn_yaw" value="0.785"/>
     <param name="model_name" value="$(arg vision_model_name)"/>
+    <!-- Map boundaries - generous to prevent instant OUT_OF_BOUNDS -->
+    <param name="map_x_min" value="-35.0"/>
+    <param name="map_x_max" value="30.0"/>
+    <param name="map_y_min" value="-35.0"/>
+    <param name="map_y_max" value="30.0"/>
+    <!-- Warmup: disable termination checks for first N steps -->
+    <param name="warmup_steps" value="30"/>
+    <!-- Collision distance - very low to prevent false positives from self-collision -->
+    <param name="collision_distance" value="0.1"/>
+    <!-- Minimum altitude before altitude crash (low to allow takeoff) -->
+    <param name="min_alt" value="0.2"/>
   </node>
 
   <group if="$(arg use_vision_bridge)">

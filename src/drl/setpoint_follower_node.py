@@ -24,7 +24,7 @@ import math
 import rospy
 from geometry_msgs.msg import PoseStamped, Point
 from nav_msgs.msg import Path
-from mavros_msgs.msg import State
+from mavros_msgs.msg import State, PositionTarget
 from std_msgs.msg import Empty
 
 
@@ -69,7 +69,8 @@ class SetpointFollowerNode:
         self._enu_votes = 0
         self._airborne_confirmed = False
 
-        self.setpoint_pub = rospy.Publisher(self.setpoint_topic, PoseStamped, queue_size=1)
+        # Use setpoint_raw/local for direct yaw control (PoseStamped orientation is ignored by PX4)
+        self.setpoint_pub = rospy.Publisher('/mavros/setpoint_raw/local', PositionTarget, queue_size=1)
         self.reached_pub = rospy.Publisher(self.reached_topic, Empty, queue_size=1)
 
         self.pose_sub = rospy.Subscriber(self.pose_topic, PoseStamped, self._pose_cb, queue_size=1)
@@ -219,19 +220,41 @@ class SetpointFollowerNode:
         if alt >= self.min_alt_for_control:
             self._airborne_confirmed = True
 
-        # Publish setpoint continuously.
-        sp = PoseStamped()
-        sp.header.stamp = rospy.Time.now()
-        sp.header.frame_id = self.frame_id
-        sp.pose.position.x = float(self.target.absolute[0])
-        sp.pose.position.y = float(self.target.absolute[1])
-        sp.pose.position.z = float(self.target.absolute[2])
-        # Use orientation from route so drone faces movement direction
-        sp.pose.orientation.x = float(self.target.orientation[0])
-        sp.pose.orientation.y = float(self.target.orientation[1])
-        sp.pose.orientation.z = float(self.target.orientation[2])
-        sp.pose.orientation.w = float(self.target.orientation[3])
-        self.setpoint_pub.publish(sp)
+        # Publish setpoint using PositionTarget for direct yaw control
+        pt = PositionTarget()
+        pt.header.stamp = rospy.Time.now()
+        pt.header.frame_id = self.frame_id
+
+        # Use FRAME_LOCAL_NED for PX4
+        pt.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
+
+        pt.position.x = float(self.target.absolute[0])
+        pt.position.y = float(self.target.absolute[1])
+        pt.position.z = float(self.target.absolute[2])
+
+        # Extract yaw from quaternion orientation
+        qx, qy, qz, qw = self.target.orientation
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+
+        # Yaw'i dogrudan kullan - ENU donusumu gerekli degil
+        pt.yaw = yaw
+
+        # Debug log - quaternion ve yaw degerlerini goster
+        rospy.loginfo_throttle(1.0, "Yaw: quat=(%.2f,%.2f,%.2f,%.2f) -> yaw=%.2f rad (%.1f deg)",
+                               qx, qy, qz, qw, yaw, math.degrees(yaw))
+
+        # type_mask: use position + yaw, ignore velocity/acceleration/yaw_rate
+        pt.type_mask = (
+            PositionTarget.IGNORE_VX |
+            PositionTarget.IGNORE_VY |
+            PositionTarget.IGNORE_VZ |
+            PositionTarget.IGNORE_AFX |
+            PositionTarget.IGNORE_AFY |
+            PositionTarget.IGNORE_AFZ |
+            PositionTarget.IGNORE_YAW_RATE
+        )
+
+        self.setpoint_pub.publish(pt)
 
         current = (
             float(self.last_pose.pose.position.x),

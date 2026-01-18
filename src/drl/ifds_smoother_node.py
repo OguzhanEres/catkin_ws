@@ -25,11 +25,15 @@ class IFDSSmootherNode:
 
         out = Path()
         out.header = msg.header
-        for pt in smoothed:
+        for i, pt in enumerate(smoothed):
             pose = PoseStamped()
             pose.header = out.header
             pose.pose.position = pt
-            pose.pose.orientation.w = 1.0
+            # Preserve orientation from input (use first pose's orientation for yaw control)
+            if msg.poses:
+                pose.pose.orientation = msg.poses[0].pose.orientation
+            else:
+                pose.pose.orientation.w = 1.0
             out.poses.append(pose)
         self.pub.publish(out)
 
