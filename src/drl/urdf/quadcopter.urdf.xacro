@@ -94,11 +94,10 @@
       </collision>
     </link>
 
-    <joint name="${name}_rotor_joint" type="continuous">
+    <joint name="${name}_rotor_joint" type="fixed">
       <parent link="${name}_arm"/>
       <child link="${name}_rotor"/>
       <origin xyz="${arm_length} 0 0.03" rpy="0 0 0"/>
-      <axis xyz="0 0 1"/>
     </joint>
   </xacro:macro>
 
@@ -208,10 +207,12 @@
   <joint name="lidar_joint" type="fixed">
     <parent link="base_link"/>
     <child link="lidar_link"/>
-    <origin xyz="0 0 ${body_height/2 + 0.025}" rpy="0 0 0"/>
+    <!-- LIDAR positioned at front of drone, ahead of legs -->
+    <!-- X = body_radius (0.25) + 0.10m offset = 0.35m forward -->
+    <origin xyz="${body_radius + 0.10} 0 0" rpy="0 0 0"/>
   </joint>
 
-  <!-- 2D LiDAR Gazebo Plugin (360 degree scan) -->
+  <!-- 2D LiDAR Gazebo Plugin (Front 180 degree scan) -->
   <gazebo reference="lidar_link">
     <sensor type="ray" name="lidar_sensor">
       <always_on>true</always_on>
@@ -220,14 +221,16 @@
       <ray>
         <scan>
           <horizontal>
-            <samples>360</samples>
+            <samples>120</samples>
             <resolution>1</resolution>
-            <min_angle>-3.14159</min_angle>
-            <max_angle>3.14159</max_angle>
+            <!-- Front 120 degrees: -60 to +60 degrees (avoids propellers at ±45°) -->
+            <min_angle>-1.0472</min_angle>
+            <max_angle>1.0472</max_angle>
           </horizontal>
         </scan>
         <range>
-          <min>0.15</min>
+          <!-- Min 0.50m to filter out any drone body/propeller readings -->
+          <min>0.50</min>
           <max>12.0</max>
           <resolution>0.01</resolution>
         </range>

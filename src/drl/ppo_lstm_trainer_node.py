@@ -117,7 +117,7 @@ class PPOLSTMTrainerNode:
         self.gamma = float(rospy.get_param("~gamma", 0.99))  # Increased for longer episodes
         self.gae_lambda = float(rospy.get_param("~gae_lambda", 0.95))
         self.clip_ratio = float(rospy.get_param("~clip_ratio", 0.2))
-        self.lr = float(rospy.get_param("~lr", 1e-4))  # Reduced for stability
+        self.lr = float(rospy.get_param("~lr", 5e-5))  # Reduced to prevent catastrophic forgetting
         self.value_coef = float(rospy.get_param("~value_coef", 0.5))
         self.entropy_coef = float(rospy.get_param("~entropy_coef", 0.05))  # Increased for exploration
         self.step_timeout = float(rospy.get_param("~step_timeout", 4.0))
@@ -154,13 +154,15 @@ class PPOLSTMTrainerNode:
         self.min_new_target_dist = float(rospy.get_param("~min_new_target_dist", 5.0))  # Min distance for new target
         self.max_new_target_dist = float(rospy.get_param("~max_new_target_dist", 30.0))  # Max distance for new target
         # Map boundaries for random target generation
-        self.map_x_min = float(rospy.get_param("~map_x_min", -28.0))
-        self.map_x_max = float(rospy.get_param("~map_x_max", 23.0))
-        self.map_y_min = float(rospy.get_param("~map_y_min", -28.0))
-        self.map_y_max = float(rospy.get_param("~map_y_max", 23.0))
+        self.map_x_min = float(rospy.get_param("~map_x_min", -300.0))
+        self.map_x_max = float(rospy.get_param("~map_x_max", 300.0))
+        self.map_y_min = float(rospy.get_param("~map_y_min", -300.0))
+        self.map_y_max = float(rospy.get_param("~map_y_max", 300.0))
         # Counter for intermediate goals reached in current episode
         self._goals_reached_this_episode = 0
         self._current_step = 0
+        # Previous action for smoothness penalty (prevents jittery movements)
+        self._prev_action: Optional[np.ndarray] = None
         # Warm-up period: disable termination checks for first N steps after episode start
         # This prevents instant death due to sensor noise or spawn position issues
         self.warmup_steps = int(rospy.get_param("~warmup_steps", 10))
@@ -191,7 +193,7 @@ class PPOLSTMTrainerNode:
         # Curriculum level (0=easy, 1=medium, 2=hard)
         self.curriculum_level = int(rospy.get_param("~curriculum_level", 0))
         # Safety Net: Maximum drift distance before force respawn (meters)
-        self.max_drift_distance = float(rospy.get_param("~max_drift_distance", 100.0))
+        self.max_drift_distance = float(rospy.get_param("~max_drift_distance", 5000.0))
         # Yaw alignment reward scale (encourages drone to face target, prevents crab walking)
         self.yaw_alignment_scale = float(rospy.get_param("~yaw_alignment_scale", 0.3))
         # Frame stacking for temporal information
@@ -321,7 +323,14 @@ class PPOLSTMTrainerNode:
         """Save checkpoint and metrics on emergency shutdown"""
         try:
             if self.model is not None and self.checkpoint_path:
-                torch.save(self.model.state_dict(), self.checkpoint_path)
+                checkpoint = {
+                    'model_state_dict': self.model.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict() if self.optimizer else None,
+                    'reward_mean': self._reward_mean,
+                    'reward_var': self._reward_var,
+                    'reward_count': self._reward_count,
+                }
+                torch.save(checkpoint, self.checkpoint_path)
                 rospy.loginfo("Emergency checkpoint saved: %s", self.checkpoint_path)
         except Exception as e:
             rospy.logerr("Failed to save emergency checkpoint: %s", e)
@@ -359,7 +368,7 @@ class PPOLSTMTrainerNode:
             rospy.logerr("Failed to save metrics: %s", e)
 
     def _record_epoch_metrics(self, epoch: int, steps: int, total_reward: float,
-                              success: bool, final_dist: Optional[float]):
+                              success: bool, final_dist: Optional[float], termination_reason: str = ""):
         """Record metrics for a completed epoch"""
         import time
         metrics = {
@@ -373,6 +382,7 @@ class PPOLSTMTrainerNode:
             'curriculum_level': self.curriculum_level,
             'goal_radius': self.goal_radius,
             'min_lidar_dist': round(self._get_min_lidar_distance() or -1, 4),
+            'termination_reason': termination_reason,
         }
         self._epoch_metrics.append(metrics)
 
@@ -769,7 +779,7 @@ class PPOLSTMTrainerNode:
                 "name": "Easy (No obstacles)",
                 "goal_radius": 1.5,           # Intermediate goal reach threshold
                 "max_dist": 150.0,            # Very tolerant bounds
-                "max_steps": 1000,            # Long episodes for continuous learning
+                "max_steps": 500,            # Episode length for learning
                 "min_goal_dist": 5.0,         # Min distance for new random target
                 "collision_distance": 0.3,    # Only crash on direct hit
                 "intermediate_bonus": 15.0,   # Reward for reaching each waypoint
@@ -782,7 +792,7 @@ class PPOLSTMTrainerNode:
                 "name": "Medium (Static obstacles)",
                 "goal_radius": 1.2,           # Tighter reach threshold
                 "max_dist": 150.0,            # Tolerant bounds for long distance
-                "max_steps": 1000,            # Long episodes for continuous learning
+                "max_steps": 500,            # Episode length for learning
                 "min_goal_dist": 8.0,         # Slightly farther targets
                 "collision_distance": 0.5,    # Standard collision
                 "intermediate_bonus": 12.0,   # Slightly less reward
@@ -795,7 +805,7 @@ class PPOLSTMTrainerNode:
                 "name": "Hard (City environment)",
                 "goal_radius": 1.0,           # Precise goal required
                 "max_dist": 150.0,            # Tolerant bounds
-                "max_steps": 1000,            # Long episodes for complex navigation
+                "max_steps": 500,            # Episode length for learning
                 "min_goal_dist": 10.0,        # Farther targets for challenge
                 "collision_distance": 0.5,    # Standard collision
                 "intermediate_bonus": 10.0,   # Standard waypoint reward
@@ -912,6 +922,7 @@ class PPOLSTMTrainerNode:
         # === RESET EPISODE COUNTERS ===
         self._current_step = 0
         self._goals_reached_this_episode = 0
+        self._prev_action = None  # Reset action history for smoothness penalty
         # Reset GPS spawn reference so next GPS reading becomes new reference
         self._spawn_gps = None
 
@@ -1009,16 +1020,124 @@ class PPOLSTMTrainerNode:
         self._reset_hidden()
 
     def _wait_until_airborne(self, timeout_s: float) -> bool:
+        """Wait for drone to reach minimum altitude for DRL control."""
+        min_alt_threshold = 1.0  # Reduced from takeoff_alt - 0.2 for more tolerance
         deadline = rospy.Time.now() + rospy.Duration(timeout_s)
         while not rospy.is_shutdown() and rospy.Time.now() < deadline:
-            if self.last_state is not None and self.last_state.armed:
-                pos = self._current_position()
-                if pos is not None:
-                    alt = pos[2] if pos[2] >= 0.0 else -pos[2]
-                    if alt >= (self.takeoff_alt - 0.2):
-                        return True
+            pos = self._current_position()
+            if pos is not None:
+                alt = pos[2] if pos[2] >= 0.0 else -pos[2]
+                if alt >= min_alt_threshold:
+                    rospy.loginfo("Airborne check passed: alt=%.2fm >= %.2fm", alt, min_alt_threshold)
+                    return True
             rospy.sleep(0.2)
+        # Debug: log why we failed
+        pos = self._current_position()
+        if pos:
+            alt = pos[2] if pos[2] >= 0.0 else -pos[2]
+            rospy.logwarn("Airborne check failed: alt=%.2fm, threshold=%.2fm", alt, min_alt_threshold)
+        else:
+            rospy.logwarn("Airborne check failed: no position data")
         return False
+
+    def _return_to_home(self, timeout_s: float = 60.0) -> bool:
+        """
+        Return to Home (RTH) - Fly drone back to spawn position.
+        DRL agent stops sending setpoints during this phase.
+        
+        Args:
+            timeout_s: Maximum time to wait for RTH completion
+            
+        Returns:
+            True if home reached, False if timeout
+        """
+        home_x, home_y, home_z = self.spawn_x, self.spawn_y, self.takeoff_alt
+        rospy.loginfo("=== RTH: Returning to home (%.1f, %.1f, %.1f) ===", home_x, home_y, home_z)
+        
+        # Build a path to home position
+        path = Path()
+        path.header.stamp = rospy.Time.now()
+        path.header.frame_id = self.frame_id
+        
+        pose = PoseStamped()
+        pose.header = path.header
+        pose.pose.orientation.w = 1.0
+        path.poses = [pose]
+        
+        acceptance_radius = 2.0  # Meters from home to consider "arrived"
+        deadline = rospy.Time.now() + rospy.Duration.from_sec(timeout_s)
+        rate = rospy.Rate(10)  # 10 Hz
+        
+        while not rospy.is_shutdown() and rospy.Time.now() < deadline:
+            current = self._current_position()
+            if current is None:
+                rate.sleep()
+                continue
+            
+            # Calculate offset from current position to home
+            dx = home_x - current[0]
+            dy = home_y - current[1]
+            dz = home_z - current[2]
+            dist_to_home = math.sqrt(dx*dx + dy*dy + dz*dz)
+            
+            # Check if we've arrived
+            if dist_to_home < acceptance_radius:
+                rospy.loginfo("RTH: Home reached! Distance: %.2fm", dist_to_home)
+                return True
+            
+            # Normalize direction and scale by step size
+            dist_xy = math.sqrt(dx*dx + dy*dy)
+            if dist_xy > 1e-6:
+                dir_x = dx / dist_xy
+                dir_y = dy / dist_xy
+            else:
+                dir_x, dir_y = 0.0, 0.0
+            
+            # Set offset (relative to current position)
+            step = min(self.step_size, dist_xy)  # Don't overshoot
+            pose.pose.position.x = dir_x * step
+            pose.pose.position.y = dir_y * step
+            pose.pose.position.z = self.takeoff_alt  # Maintain altitude
+            
+            # Update timestamps
+            path.header.stamp = rospy.Time.now()
+            pose.header.stamp = path.header.stamp
+            
+            # Publish RTH setpoint (not from DRL agent)
+            self.route_pub.publish(path)
+            
+            # Log progress every 2 seconds
+            rospy.loginfo_throttle(2.0, "RTH: Distance to home: %.1fm", dist_to_home)
+            
+            rate.sleep()
+        
+        rospy.logwarn("RTH: Timeout! Could not reach home in %.0fs", timeout_s)
+        return False
+
+    def _soft_reset_episode(self):
+        """
+        Soft reset - Reset episode counters WITHOUT Gazebo respawn.
+        Used after RTH when drone is already at home position.
+        """
+        rospy.loginfo("=== Soft Reset: Starting new episode ===")
+        
+        # Reset episode counters
+        self._current_step = 0
+        self._goals_reached_this_episode = 0
+        self._prev_action = None  # Reset action history for smoothness penalty
+        
+        # Reset GPS spawn reference (drone is now at home, treat as new spawn)
+        self._spawn_gps = None
+        
+        # Generate new target
+        initial_target = self._generate_random_target()
+        self._set_new_target(initial_target[0], initial_target[1], initial_target[2])
+        rospy.loginfo("Soft reset complete. New target: (%.2f, %.2f, %.2f)",
+                     initial_target[0], initial_target[1], initial_target[2])
+        
+        # Reset LSTM hidden state for fresh start
+        self._reset_hidden()
+        self._reset_frame_buffer()
 
     def _reset_hidden(self):
         if self.model is None:
@@ -1332,7 +1451,7 @@ class PPOLSTMTrainerNode:
         # Clip to prevent extreme values
         return float(np.clip(reward, -self.reward_clip, self.reward_clip))
 
-    def _compute_reward(self, prev_dist: float, step_count: int) -> Tuple[float, bool, str]:
+    def _compute_reward(self, prev_dist: float, step_count: int, action: Optional[np.ndarray] = None) -> Tuple[float, bool, str]:
         """
         Compute reward using CONTINUOUS FLOW (Carrot-Stick) method.
 
@@ -1359,9 +1478,9 @@ class PPOLSTMTrainerNode:
         current = self._current_position()
         min_lidar_dist = self._get_min_lidar_distance()
 
-        # Filter out very low LIDAR readings (likely self-collision with drone body/propellers)
-        # Real obstacles won't be closer than 0.05m - sensor noise or self-view
-        if min_lidar_dist is not None and min_lidar_dist < 0.05:
+        # Filter out low LIDAR readings (likely self-collision with drone body/propellers)
+        # Drone body/propellers can appear at 0.15-0.25m during maneuvers, so filter below 0.50m
+        if min_lidar_dist is not None and min_lidar_dist < 0.50:
             min_lidar_dist = None  # Ignore, not a real obstacle
 
         reward = 0.0
@@ -1397,8 +1516,8 @@ class PPOLSTMTrainerNode:
         # Only check after warmup period, use generous boundaries
         if not in_warmup and current:
             x, y, z = current[0], current[1], current[2]
-            # Very generous bounds: map is roughly -30 to +25, allow 10m margin
-            bound_margin = 10.0
+            # Very generous bounds: map is roughly -30 to +25, allow 50m margin for exploration
+            bound_margin = 50.0
             x_min_bound = self.map_x_min - bound_margin
             x_max_bound = self.map_x_max + bound_margin
             y_min_bound = self.map_y_min - bound_margin
@@ -1424,14 +1543,15 @@ class PPOLSTMTrainerNode:
 
         # --- CONDITION 3: ALTITUDE CRASH - Too low ---
         # Only check after warmup period (drone may be taking off)
+        # Use fixed 0.1m threshold to be tolerant of takeoff altitude fluctuations
         if not in_warmup and current:
             alt = current[2] if current[2] >= 0.0 else -current[2]
-            if alt < self.min_alt:
+            if alt < 0.1:
                 reward = self.crash_penalty
                 done = True
                 termination_reason = "ALTITUDE_CRASH"
-                rospy.logwarn("ALTITUDE_CRASH! alt=%.2fm < min=%.2fm pos=(%.1f,%.1f) step=%d",
-                             alt, self.min_alt, current[0], current[1], step_count)
+                rospy.logwarn("ALTITUDE_CRASH! alt=%.2fm < min=0.1m pos=(%.1f,%.1f) step=%d",
+                             alt, current[0], current[1], step_count)
                 return reward, done, termination_reason
 
         # --- CONDITION 4: TIMEOUT - Max steps reached (always checked) ---
@@ -1497,6 +1617,16 @@ class PPOLSTMTrainerNode:
                 proximity_penalty = (warning_distance - min_lidar_dist) * 0.5
                 reward -= proximity_penalty
 
+        # --- 5. LOW ALTITUDE PENALTY (prevents ground hugging) ---
+        # Penalize drone for flying too low - encourages safe altitude
+        if current:
+            alt = current[2] if current[2] >= 0.0 else -current[2]
+            safe_altitude = 1.0  # Prefer flying above 1m
+            if alt < safe_altitude:
+                # Stronger penalty as drone gets closer to ground
+                low_alt_penalty = (safe_altitude - alt) * 2.0  # Strong penalty
+                reward -= low_alt_penalty
+
         # --- 4. YAW ALIGNMENT PENALTY (prevents crab walking) ---
         # Penalize drone for not facing the target direction
         # This forces the drone to turn its nose toward the goal
@@ -1511,6 +1641,26 @@ class PPOLSTMTrainerNode:
             # Normalize to [0, 1] and apply penalty
             yaw_penalty = (yaw_error / math.pi) * self.yaw_alignment_scale
             reward -= yaw_penalty
+
+        # --- 6. YAW RATE PENALTY (prevents spinning/fırıldak) ---
+        # Penalize excessive yaw commands to prevent drone from spinning
+        # action[3] is typically yaw rate command (if using 4D actions)
+        if action is not None and len(action) > 3:
+            yaw_action_magnitude = abs(action[3])
+            if yaw_action_magnitude > 0.1:  # Allow small corrections
+                yaw_rate_penalty = yaw_action_magnitude * 0.5
+                reward -= yaw_rate_penalty
+
+        # --- 7. ACTION SMOOTHNESS PENALTY (prevents jittery movement) ---
+        # Penalize large changes between consecutive actions
+        if action is not None:
+            if self._prev_action is not None and len(action) == len(self._prev_action):
+                action_diff = np.linalg.norm(np.array(action) - np.array(self._prev_action))
+                if action_diff > 0.2:  # Allow small adjustments
+                    smoothness_penalty = action_diff * 0.3
+                    reward -= smoothness_penalty
+            # Update prev_action for next step
+            self._prev_action = np.array(action).copy()
 
         # Clip reward to prevent extreme values
         reward = float(np.clip(reward, -self.reward_clip, self.reward_clip))
@@ -1528,9 +1678,26 @@ class PPOLSTMTrainerNode:
                 os.makedirs(checkpoint_dir, exist_ok=True)
         if self.checkpoint_path and os.path.exists(self.checkpoint_path):
             try:
-                state = torch.load(self.checkpoint_path, map_location=device, weights_only=True)
-                self.model.load_state_dict(state)
-                rospy.loginfo("Loaded checkpoint: %s", self.checkpoint_path)
+                state = torch.load(self.checkpoint_path, map_location=device, weights_only=False)
+                # Handle both new dictionary format and legacy state_dict format
+                if isinstance(state, dict) and 'model_state_dict' in state:
+                    # New format: dictionary with model, optimizer, and reward stats
+                    self.model.load_state_dict(state['model_state_dict'])
+                    if 'optimizer_state_dict' in state and state['optimizer_state_dict'] is not None:
+                        self.optimizer.load_state_dict(state['optimizer_state_dict'])
+                    if 'reward_mean' in state:
+                        self._reward_mean = state['reward_mean']
+                    if 'reward_var' in state:
+                        self._reward_var = state['reward_var']
+                    if 'reward_count' in state:
+                        self._reward_count = state['reward_count']
+                    rospy.loginfo("Loaded checkpoint (new format): %s", self.checkpoint_path)
+                    rospy.loginfo("  Reward stats: mean=%.4f, var=%.4f, count=%d",
+                                 self._reward_mean, self._reward_var, self._reward_count)
+                else:
+                    # Legacy format: just the model state_dict
+                    self.model.load_state_dict(state)
+                    rospy.loginfo("Loaded checkpoint (legacy format): %s", self.checkpoint_path)
             except Exception as exc:
                 rospy.logwarn("Checkpoint load failed: %s", exc)
 
@@ -1573,19 +1740,28 @@ class PPOLSTMTrainerNode:
                 if rospy.is_shutdown():
                     return
 
+                # First epoch needs hard reset to get drone airborne
+                # Subsequent epochs use RTH (done at episode end) so just apply curriculum
+                is_first_epoch = (epoch_index == 1)
+                is_airborne = self._wait_until_airborne(1.0)  # Quick check
+                
                 if self.reset_each_epoch:
-                    # Apply curriculum configuration before reset
                     self._apply_curriculum_config()
-                    self._reset_frame_buffer()
-                    self._reset_episode()
-                    if not self._wait_until_airborne(30.0):
-                        rospy.logwarn("Episode start failed (not airborne). Retrying next epoch.")
-                        continue
-                    # Check spawn safety after sensors are ready
-                    rospy.sleep(0.5)  # Wait for LIDAR data
-                    if not self._check_spawn_safety():
-                        rospy.logwarn("Unsafe spawn detected, will retry with new position next epoch")
-                        # Don't continue here - let the episode run, agent will learn from it
+                    
+                    if is_first_epoch or not is_airborne:
+                        # Hard reset: Gazebo respawn + takeoff (only first epoch or if crashed)
+                        rospy.loginfo("Hard reset: First epoch or drone not airborne")
+                        self._reset_frame_buffer()
+                        self._reset_episode()
+                        if not self._wait_until_airborne(30.0):
+                            rospy.logwarn("Episode start failed (not airborne). Retrying next epoch.")
+                            continue
+                        rospy.sleep(0.5)  # Wait for LIDAR data
+                        if not self._check_spawn_safety():
+                            rospy.logwarn("Unsafe spawn detected, will retry with new position next epoch")
+                    else:
+                        # Soft start: RTH already done at episode end, just continue
+                        rospy.loginfo("Soft start: Drone already airborne from RTH")
                 else:
                     # Safety Net: Check if agent drifted too far from spawn
                     drift_dist = self._distance_to_spawn()
@@ -1640,8 +1816,8 @@ class PPOLSTMTrainerNode:
                     self.route_pub.publish(route)
                     self._wait_step()
 
-                    # Compute reward with step count for logging
-                    reward, done, termination_reason = self._compute_reward(prev_dist, step_count)
+                    # Compute reward with step count and action for smoothness penalty
+                    reward, done, termination_reason = self._compute_reward(prev_dist, step_count, action)
                     dist = self._distance_to_target() or prev_dist
                     prev_dist = dist
 
@@ -1668,6 +1844,24 @@ class PPOLSTMTrainerNode:
                 rospy.loginfo("=== Episode %d Complete ===", epoch_index)
                 rospy.loginfo("  Steps: %d, Goals Reached: %d, Reason: %s",
                              step_count, self._goals_reached_this_episode, termination_reason)
+
+                # =====================================================================
+                # RTH (Return to Home) - Fly back to spawn before next episode
+                # DRL agent STOPS sending setpoints during this phase
+                # =====================================================================
+                if self.reset_each_epoch:
+                    rth_success = self._return_to_home(timeout_s=60.0)
+                    if rth_success:
+                        rospy.loginfo("RTH complete. Stabilizing for 5 seconds...")
+                        rospy.sleep(5.0)
+                        # Soft reset: prepare for next episode without Gazebo respawn
+                        self._soft_reset_episode()
+                    else:
+                        rospy.logwarn("RTH failed. Falling back to hard reset (Gazebo respawn)...")
+                        self._reset_episode()
+                        if not self._wait_until_airborne(30.0):
+                            rospy.logwarn("Hard reset failed. Skipping epoch.")
+                            continue
 
                 # Ensure done is set for training (timeout is handled in _compute_reward)
                 if not done_list or not done_list[-1]:
@@ -1710,7 +1904,14 @@ class PPOLSTMTrainerNode:
                     self.optimizer.step()
 
                 if self.checkpoint_path:
-                    torch.save(self.model.state_dict(), self.checkpoint_path)
+                    checkpoint = {
+                        'model_state_dict': self.model.state_dict(),
+                        'optimizer_state_dict': self.optimizer.state_dict(),
+                        'reward_mean': self._reward_mean,
+                        'reward_var': self._reward_var,
+                        'reward_count': self._reward_count,
+                    }
+                    torch.save(checkpoint, self.checkpoint_path)
 
                 # Record epoch metrics
                 final_dist = self._distance_to_target()
@@ -1724,7 +1925,8 @@ class PPOLSTMTrainerNode:
                     steps=len(obs_list),
                     total_reward=float(rewards.sum()),
                     success=success,
-                    final_dist=final_dist
+                    final_dist=final_dist,
+                    termination_reason=termination_reason
                 )
 
                 # Detailed epoch summary
