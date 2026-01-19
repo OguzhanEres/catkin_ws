@@ -160,6 +160,11 @@ class PPOLSTMTrainerNode:
         self.pitch_ground_deg = float(rospy.get_param("~pitch_ground_deg", 15.0))
         # Collision buffer for temporal filtering
         self._collision_buffer = collections.deque(maxlen=self.collision_debounce_frames)
+        # Proximity penalty parameters (quadratic penalty for obstacle avoidance)
+        self.k_prox = float(rospy.get_param("~k_prox", 2.0))  # Quadratic penalty coefficient
+        self.warning_distance = float(rospy.get_param("~warning_distance", 3.0))  # Start penalty at this distance
+        # Debug counter for lidar logging
+        self._lidar_debug_counter = 0
 
         # === CONTINUOUS FLOW (Carrot-Stick) PARAMETERS ===
         self.max_steps = int(rospy.get_param("~max_steps", 500))  # Episode length
@@ -1644,10 +1649,17 @@ class PPOLSTMTrainerNode:
         current = self._current_position()
         min_lidar_dist = self._get_min_lidar_distance()
 
-        # Filter out low LIDAR readings (likely self-collision with drone body/propellers)
-        # Drone body/propellers can appear at 0.15-0.25m during maneuvers, so filter below 0.50m
-        if min_lidar_dist is not None and min_lidar_dist < 0.50:
-            min_lidar_dist = None  # Ignore, not a real obstacle
+        # === PITCH-AWARE GROUND FILTER ===
+        # Only ignore <0.5m readings when pitch is high (ground effect)
+        # When pitch is low, these are REAL obstacles - don't ignore!
+        pitch_deg = abs(self._get_current_pitch_deg())
+        if min_lidar_dist is not None and min_lidar_dist < 0.50 and pitch_deg > self.pitch_ground_deg:
+            # Ground-suspect: drone is pitching and seeing low reading
+            min_lidar_dist = None
+        
+        # Clamp very small values for numerical stability (but don't ignore them)
+        if min_lidar_dist is not None:
+            min_lidar_dist = max(min_lidar_dist, 0.05)
 
         reward = 0.0
         done = False
@@ -1778,14 +1790,26 @@ class PPOLSTMTrainerNode:
         # Small negative reward per step to encourage efficiency
         reward -= self.step_penalty
 
-        # --- 3. OBSTACLE PROXIMITY PENALTY (safety signal) ---
-        # Gradual penalty as UAV gets closer to obstacles
-        if min_lidar_dist is not None:
-            warning_distance = 2.0  # Start warning below this
-            if min_lidar_dist < warning_distance:
-                # Linear penalty: closer = worse
-                proximity_penalty = (warning_distance - min_lidar_dist) * 0.5
-                reward -= proximity_penalty
+        # --- 3. OBSTACLE PROXIMITY PENALTY (quadratic - escalates quickly near obstacles) ---
+        # Formula: penalty = k_prox * (x^2) where x = (warning_dist - dist) / warning_dist
+        proximity_penalty = 0.0
+        if min_lidar_dist is not None and min_lidar_dist < self.warning_distance:
+            # Normalize distance to [0, 1] range (1 = touching obstacle, 0 = at warning boundary)
+            x = (self.warning_distance - min_lidar_dist) / self.warning_distance
+            x = max(0.0, min(1.0, x))  # Clamp to [0, 1]
+            # Quadratic penalty: grows fast as drone gets closer
+            proximity_penalty = self.k_prox * (x * x)
+            reward -= proximity_penalty
+        
+        # === DEBUG LOG (every 200 steps) ===
+        self._lidar_debug_counter += 1
+        if self._lidar_debug_counter % 200 == 0:
+            collision_votes = sum(self._collision_buffer) if self._collision_buffer else 0
+            rospy.loginfo(
+                "LiDAR[step=%d]: pitch=%.1f° min_dist=%.2fm prox_pen=%.3f coll_votes=%d/%d",
+                step_count, pitch_deg, min_lidar_dist or -1, proximity_penalty,
+                collision_votes, self.collision_debounce_frames
+            )
 
         # --- 5. LOW ALTITUDE PENALTY (prevents ground hugging) ---
         # Penalize drone for flying too low - encourages safe altitude

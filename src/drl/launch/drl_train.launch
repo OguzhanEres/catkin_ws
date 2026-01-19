@@ -95,6 +95,9 @@
     <param name="lidar_max_range" value="10.0"/>  <!-- Must match sensor_vectorizer range_max -->
     <param name="collision_debounce_frames" value="3"/>  <!-- Require 2/3 frames for collision -->
     <param name="pitch_ground_deg" value="15.0"/>  <!-- Ignore low readings when pitching -->
+    <!-- Quadratic proximity penalty params -->
+    <param name="k_prox" value="2.0"/>  <!-- Penalty coefficient (higher = stronger avoidance) -->
+    <param name="warning_distance" value="3.0"/>  <!-- Start penalty at this distance (meters) -->
     <!-- Minimum altitude before altitude crash (very low to allow takeoff fluctuations) -->
     <param name="min_alt" value="0.05"/>
   </node>
