@@ -163,6 +163,15 @@ class PPOLSTMTrainerNode:
         self._current_step = 0
         # Previous action for smoothness penalty (prevents jittery movements)
         self._prev_action: Optional[np.ndarray] = None
+        # === NEW METRICS FOR CONTINUOUS EPISODE TRACKING ===
+        # Total distance traveled by drone in current episode (meters)
+        self._total_distance_traveled = 0.0
+        # Previous position for distance calculation
+        self._prev_pos: Optional[np.ndarray] = None
+        # Altitude sum for average calculation
+        self._altitude_sum = 0.0
+        # Step count for altitude average
+        self._step_count_for_avg = 0
         # Warm-up period: disable termination checks for first N steps after episode start
         # This prevents instant death due to sensor noise or spawn position issues
         self.warmup_steps = int(rospy.get_param("~warmup_steps", 10))
@@ -371,6 +380,10 @@ class PPOLSTMTrainerNode:
                               success: bool, final_dist: Optional[float], termination_reason: str = ""):
         """Record metrics for a completed epoch"""
         import time
+        
+        # Calculate average altitude for this episode
+        avg_altitude = self._altitude_sum / max(1, self._step_count_for_avg)
+        
         metrics = {
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
             'epoch': epoch,
@@ -383,6 +396,10 @@ class PPOLSTMTrainerNode:
             'goal_radius': self.goal_radius,
             'min_lidar_dist': round(self._get_min_lidar_distance() or -1, 4),
             'termination_reason': termination_reason,
+            # === NEW CONTINUOUS EPISODE METRICS ===
+            'goals_reached': self._goals_reached_this_episode,  # 🎯 Number of goals reached this episode
+            'total_distance_traveled': round(self._total_distance_traveled, 2),  # 📏 Meters traveled
+            'average_altitude': round(avg_altitude, 2),  # 📉 Average flying height (m)
         }
         self._epoch_metrics.append(metrics)
 
@@ -923,6 +940,11 @@ class PPOLSTMTrainerNode:
         self._current_step = 0
         self._goals_reached_this_episode = 0
         self._prev_action = None  # Reset action history for smoothness penalty
+        # === RESET NEW METRICS COUNTERS ===
+        self._total_distance_traveled = 0.0
+        self._prev_pos = None
+        self._altitude_sum = 0.0
+        self._step_count_for_avg = 0
         # Reset GPS spawn reference so next GPS reading becomes new reference
         self._spawn_gps = None
 
@@ -1125,6 +1147,11 @@ class PPOLSTMTrainerNode:
         self._current_step = 0
         self._goals_reached_this_episode = 0
         self._prev_action = None  # Reset action history for smoothness penalty
+        # === RESET NEW METRICS COUNTERS ===
+        self._total_distance_traveled = 0.0
+        self._prev_pos = None
+        self._altitude_sum = 0.0
+        self._step_count_for_avg = 0
         
         # Reset GPS spawn reference (drone is now at home, treat as new spawn)
         self._spawn_gps = None
