@@ -5,12 +5,14 @@ Publishes route actions, observes progress toward a fixed target, and updates po
 """
 import argparse
 import atexit
+import collections
 import csv
 import math
 import os
 import signal
 import sys
 import threading
+import uuid
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -149,9 +151,19 @@ class PPOLSTMTrainerNode:
         self.max_dist = float(rospy.get_param("~max_dist", 100.0))  # Max distance before out of bounds
         self.collision_distance = float(rospy.get_param("~collision_distance", 0.5))  # LIDAR collision threshold
 
+        # === ROBUST LIDAR PARAMETERS ===
+        # LiDAR max range for denormalization (sync with sensor_vectorizer)
+        self.lidar_max_range = float(rospy.get_param("~lidar_max_range", 10.0))
+        # Collision debounce: require N consecutive frames of collision to trigger
+        self.collision_debounce_frames = int(rospy.get_param("~collision_debounce_frames", 3))
+        # Pitch threshold for ignoring low LiDAR readings (ground effect)
+        self.pitch_ground_deg = float(rospy.get_param("~pitch_ground_deg", 15.0))
+        # Collision buffer for temporal filtering
+        self._collision_buffer = collections.deque(maxlen=self.collision_debounce_frames)
+
         # === CONTINUOUS FLOW (Carrot-Stick) PARAMETERS ===
         self.max_steps = int(rospy.get_param("~max_steps", 500))  # Episode length
-        self.min_new_target_dist = float(rospy.get_param("~min_new_target_dist", 5.0))  # Min distance for new target
+        self.min_new_target_dist = float(rospy.get_param("~min_new_target_dist", 15.0))  # Min distance for new target (prevents exploit)
         self.max_new_target_dist = float(rospy.get_param("~max_new_target_dist", 30.0))  # Max distance for new target
         # Map boundaries for random target generation
         self.map_x_min = float(rospy.get_param("~map_x_min", -300.0))
@@ -172,6 +184,8 @@ class PPOLSTMTrainerNode:
         self._altitude_sum = 0.0
         # Step count for altitude average
         self._step_count_for_avg = 0
+        # Altitude samples for std calculation (stability metric)
+        self._altitude_samples: List[float] = []
         # Warm-up period: disable termination checks for first N steps after episode start
         # This prevents instant death due to sensor noise or spawn position issues
         self.warmup_steps = int(rospy.get_param("~warmup_steps", 10))
@@ -304,6 +318,11 @@ class PPOLSTMTrainerNode:
         self._current_epoch = 0
         self._shutdown_requested = False
         
+        # === COURIER DASHBOARD GLOBAL COUNTERS ===
+        self._run_id = str(uuid.uuid4())[:8]  # Unique ID for this training run
+        self._global_episode_count = 0        # Continuously incrementing episode counter
+        rospy.loginfo("Training Run ID: %s", self._run_id)
+        
         # Register shutdown handlers for graceful exit
         self._register_shutdown_handlers()
 
@@ -400,6 +419,48 @@ class PPOLSTMTrainerNode:
             'goals_reached': self._goals_reached_this_episode,  # 🎯 Number of goals reached this episode
             'total_distance_traveled': round(self._total_distance_traveled, 2),  # 📏 Meters traveled
             'average_altitude': round(avg_altitude, 2),  # 📉 Average flying height (m)
+        }
+        self._epoch_metrics.append(metrics)
+
+        # Auto-save every 5 epochs
+        if len(self._epoch_metrics) >= 5:
+            self._save_metrics()
+
+    def _record_epoch_metrics_v2(self, epoch: int, steps: int, total_reward: float,
+                                  success: bool, final_dist: Optional[float], termination_reason: str,
+                                  goals_reached: int, distance_traveled: float,
+                                  altitude_sum: float, step_count_for_avg: int):
+        """
+        Record metrics for a completed epoch - V2 with explicit metric values.
+        Enhanced for Courier Dashboard with derived efficiency metrics.
+        """
+        import time
+        
+        # Calculate average altitude from provided values
+        avg_altitude = altitude_sum / max(1, step_count_for_avg)
+        
+        # CONTINUOUS MODE FIX: Success = goals_reached > 0 OR original success
+        real_success = 1 if (goals_reached > 0 or success) else 0
+        
+        # === DERIVED EFFICIENCY METRICS ===
+        # Steps per Goal (lower is better - agent reaches goals faster)
+        steps_per_goal = round(steps / max(1, goals_reached), 2) if goals_reached > 0 else steps
+        # Distance per Goal (lower is better - more direct path to goals)
+        dist_per_goal = round(distance_traveled / max(1, goals_reached), 2) if goals_reached > 0 else round(distance_traveled, 2)
+        
+        metrics = {
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'run_id': self._run_id,
+            'global_ep': self._global_episode_count,
+            'epoch': epoch,
+            'steps': steps,
+            'reward': round(total_reward, 2),
+            'success': real_success,
+            'goals': goals_reached,
+            'total_dist': round(distance_traveled, 2),
+            'avg_alt': round(avg_altitude, 2),
+            'steps_per_goal': steps_per_goal,
+            'dist_per_goal': dist_per_goal,
         }
         self._epoch_metrics.append(metrics)
 
@@ -677,15 +738,82 @@ class PPOLSTMTrainerNode:
         return False
 
     def _get_min_lidar_distance(self) -> Optional[float]:
-        """Get minimum distance from LIDAR readings (obstacle clearance check)."""
+        """
+        Get minimum distance from LIDAR readings (obstacle clearance check).
+        
+        Uses parametric lidar_max_range for proper denormalization.
+        Falls back to /agent/lidar_range_max param set by sensor_vectorizer.
+        """
         lidar = self.latest_vecs.get("lidar")
-        if lidar is None:
+        if lidar is None or len(lidar) == 0:
             return None
-        # LIDAR values are normalized to [0, 1], multiply by max range (typically 10-30m)
-        # Assuming max range of 10m for safety check
-        lidar_max_range = 10.0
+        
+        # Try to get range_max from ROS param (set by sensor_vectorizer)
+        try:
+            range_max = rospy.get_param("/agent/lidar_range_max", None)
+            if range_max is not None:
+                self.lidar_max_range = float(range_max)
+        except Exception:
+            pass  # Use existing self.lidar_max_range
+        
+        # LIDAR values are normalized to [0, 1], denormalize
         min_normalized = float(np.min(lidar))
-        return min_normalized * lidar_max_range
+        return min_normalized * self.lidar_max_range
+
+    def _get_current_pitch_deg(self) -> float:
+        """
+        Extract current pitch angle from IMU quaternion.
+        Returns pitch in degrees (positive = nose up, negative = nose down).
+        """
+        imu = self.latest_vecs.get("imu")
+        if imu is None or len(imu) < 4:
+            return 0.0
+        
+        # IMU vec format: [qx, qy, qz, qw, ax, ay, az]
+        qx, qy, qz, qw = imu[0], imu[1], imu[2], imu[3]
+        
+        # Quaternion to pitch (Y-axis rotation)
+        sinp = 2.0 * (qw * qy - qz * qx)
+        if abs(sinp) >= 1:
+            pitch_rad = math.copysign(math.pi / 2, sinp)
+        else:
+            pitch_rad = math.asin(sinp)
+        
+        return math.degrees(pitch_rad)
+
+    def _check_collision_debounced(self, min_lidar_dist: Optional[float], step_count: int) -> bool:
+        """
+        Debounced collision detection with pitch-aware filtering.
+        
+        Returns True only if collision is confirmed over multiple frames.
+        Ignores low readings when drone is pitching significantly (ground effect).
+        """
+        # Warmup period bypass
+        if step_count <= self.warmup_steps:
+            self._collision_buffer.clear()
+            return False
+        
+        # Check if reading is valid
+        if min_lidar_dist is None:
+            self._collision_buffer.append(False)
+            return False
+        
+        # Pitch-aware filtering: ignore low readings when pitching
+        pitch_deg = abs(self._get_current_pitch_deg())
+        if pitch_deg > self.pitch_ground_deg and min_lidar_dist < 1.0:
+            # Drone is pitching and seeing ground - ignore
+            self._collision_buffer.append(False)
+            return False
+        
+        # Check collision threshold
+        is_collision_frame = min_lidar_dist < self.collision_distance
+        self._collision_buffer.append(is_collision_frame)
+        
+        # Require majority of frames in buffer to confirm collision
+        collision_votes = sum(self._collision_buffer)
+        required_votes = max(1, self.collision_debounce_frames - 1)  # e.g., 2 out of 3
+        
+        return collision_votes >= required_votes
 
     def _compute_goal_distance_at_position(self, x: float, y: float, z: float) -> float:
         """Compute distance to goal from a given position."""
@@ -940,11 +1068,17 @@ class PPOLSTMTrainerNode:
         self._current_step = 0
         self._goals_reached_this_episode = 0
         self._prev_action = None  # Reset action history for smoothness penalty
+        # === INCREMENT GLOBAL EPISODE COUNTER ===
+        self._global_episode_count += 1
+        rospy.loginfo("Global Episode #%d starting...", self._global_episode_count)
         # === RESET NEW METRICS COUNTERS ===
         self._total_distance_traveled = 0.0
-        self._prev_pos = None
         self._altitude_sum = 0.0
         self._step_count_for_avg = 0
+        self._altitude_samples = []  # For altitude_std calculation
+        # Initialize prev_pos with current position (for distance calculation)
+        current = self._current_position()
+        self._prev_pos = np.array(current) if current else None
         # Reset GPS spawn reference so next GPS reading becomes new reference
         self._spawn_gps = None
 
@@ -1147,11 +1281,16 @@ class PPOLSTMTrainerNode:
         self._current_step = 0
         self._goals_reached_this_episode = 0
         self._prev_action = None  # Reset action history for smoothness penalty
+        # === INCREMENT GLOBAL EPISODE COUNTER ===
+        self._global_episode_count += 1
+        rospy.loginfo("Global Episode #%d starting (soft reset)...", self._global_episode_count)
         # === RESET NEW METRICS COUNTERS ===
         self._total_distance_traveled = 0.0
-        self._prev_pos = None
         self._altitude_sum = 0.0
         self._step_count_for_avg = 0
+        # Initialize prev_pos with current position (for distance calculation)
+        current = self._current_position()
+        self._prev_pos = np.array(current) if current else None
         
         # Reset GPS spawn reference (drone is now at home, treat as new spawn)
         self._spawn_gps = None
@@ -1529,14 +1668,18 @@ class PPOLSTMTrainerNode:
         # =====================================================================
 
         # --- CONDITION 1: COLLISION - Hit an obstacle ---
-        # Only check after warmup period
-        if not in_warmup and min_lidar_dist is not None and min_lidar_dist < self.collision_distance:
+        # Uses debounced collision detection with pitch-aware filtering
+        # Requires multiple consecutive frames of collision to confirm (prevents single-frame noise)
+        if self._check_collision_debounced(min_lidar_dist, step_count):
             reward = self.crash_penalty
             done = True
             termination_reason = "COLLISION"
+            collision_votes = sum(self._collision_buffer)
+            pitch_deg = self._get_current_pitch_deg()
             pos_str = f"pos=({current[0]:.1f},{current[1]:.1f},{current[2]:.1f})" if current else "pos=unknown"
-            rospy.logwarn("COLLISION! LIDAR=%.2fm %s step=%d goals=%d",
-                         min_lidar_dist, pos_str, step_count, self._goals_reached_this_episode)
+            rospy.logwarn("COLLISION! LIDAR=%.2fm pitch=%.1f° votes=%d/%d %s step=%d goals=%d",
+                         min_lidar_dist or -1, pitch_deg, collision_votes, self.collision_debounce_frames,
+                         pos_str, step_count, self._goals_reached_this_episode)
             return reward, done, termination_reason
 
         # --- CONDITION 2: OUT OF BOUNDS - Outside map boundaries ---
@@ -1843,6 +1986,21 @@ class PPOLSTMTrainerNode:
                     self.route_pub.publish(route)
                     self._wait_step()
 
+                    # === UPDATE NEW METRICS ===
+                    current_pos = self._current_position()
+                    if current_pos is not None:
+                        current_pos_arr = np.array(current_pos)
+                        # 1. Track total distance traveled
+                        if self._prev_pos is not None:
+                            dist_step = float(np.linalg.norm(current_pos_arr[:2] - self._prev_pos[:2]))  # XY only
+                            self._total_distance_traveled += dist_step
+                        self._prev_pos = current_pos_arr.copy()
+                        
+                        # 2. Track altitude for average
+                        alt = current_pos[2] if current_pos[2] >= 0.0 else -current_pos[2]
+                        self._altitude_sum += alt
+                        self._step_count_for_avg += 1
+
                     # Compute reward with step count and action for smoothness penalty
                     reward, done, termination_reason = self._compute_reward(prev_dist, step_count, action)
                     dist = self._distance_to_target() or prev_dist
@@ -1865,12 +2023,20 @@ class PPOLSTMTrainerNode:
                         break
 
                 # =====================================================================
-                # EPISODE END SUMMARY
+                # EPISODE END SUMMARY - Save metrics BEFORE reset!
                 # =====================================================================
-                # Log final episode stats
+                # CRITICAL: Capture metrics BEFORE reset functions clear them
+                episode_goals_reached = self._goals_reached_this_episode
+                episode_distance_traveled = self._total_distance_traveled
+                episode_altitude_sum = self._altitude_sum
+                episode_step_count = self._step_count_for_avg
+                
+                # Log final episode stats with NEW METRICS
+                avg_alt_log = episode_altitude_sum / max(1, episode_step_count)
                 rospy.loginfo("=== Episode %d Complete ===", epoch_index)
-                rospy.loginfo("  Steps: %d, Goals Reached: %d, Reason: %s",
-                             step_count, self._goals_reached_this_episode, termination_reason)
+                rospy.loginfo("  Steps: %d | Goals: %d | Distance: %.1fm | Avg Alt: %.2fm | Reason: %s",
+                             step_count, episode_goals_reached, 
+                             episode_distance_traveled, avg_alt_log, termination_reason)
 
                 # =====================================================================
                 # RTH (Return to Home) - Fly back to spawn before next episode
@@ -1940,20 +2106,25 @@ class PPOLSTMTrainerNode:
                     }
                     torch.save(checkpoint, self.checkpoint_path)
 
-                # Record epoch metrics
+                # Record epoch metrics (using captured values from BEFORE reset)
                 final_dist = self._distance_to_target()
                 success = termination_reason == "SUCCESS"
 
                 # Update curriculum learning based on success
                 self._update_curriculum(success)
 
-                self._record_epoch_metrics(
+                # Use a modified version that accepts the pre-reset values
+                self._record_epoch_metrics_v2(
                     epoch=epoch_index,
                     steps=len(obs_list),
                     total_reward=float(rewards.sum()),
                     success=success,
                     final_dist=final_dist,
-                    termination_reason=termination_reason
+                    termination_reason=termination_reason,
+                    goals_reached=episode_goals_reached,
+                    distance_traveled=episode_distance_traveled,
+                    altitude_sum=episode_altitude_sum,
+                    step_count_for_avg=episode_step_count
                 )
 
                 # Detailed epoch summary

@@ -3,13 +3,14 @@
   <world name="curriculum_stage2_obstacles">
     <!--
     ================================================================================
-    CURRICULUM STAGE 2: STATIC OBSTACLES
+    CURRICULUM STAGE 2: STATIC OBSTACLES (ENHANCED)
     ================================================================================
-    Difficulty: MEDIUM
-    Goal: Learn obstacle avoidance with static cube obstacles
+    Difficulty: MEDIUM-HARD
+    Goal: Learn obstacle avoidance with taller obstacles uniformly distributed
     Spawn: (-25, -25, 0.1)
-    Target: (20, 20, 2.5) - approximately 63m distance (diagonal across map)
-    Obstacles: 5 static cubes placed along the path
+    Target: Dynamic (random within map)
+    Obstacles: 12 static cubes with doubled heights, homogeneously distributed
+    Wind: Light constant wind for flight stability training
     ================================================================================
     -->
 
@@ -29,7 +30,16 @@
       </ode>
       <real_time_update_rate>250</real_time_update_rate>
       <max_step_size>0.004</max_step_size>
+      <!-- Light wind for stability training -->
+      <wind>
+        <linear_velocity>0.5 0.3 0</linear_velocity>
+      </wind>
     </physics>
+
+    <!-- Enable wind globally -->
+    <wind>
+      <linear_velocity>0.5 0.3 0</linear_velocity>
+    </wind>
 
     <light name="sun" type="directional">
       <cast_shadows>false</cast_shadows>
@@ -139,18 +149,20 @@
 
     <!--
     ================================================================================
-    STATIC OBSTACLES - Cubes placed along diagonal path from (-25,-25) to (20,20)
+    STATIC OBSTACLES - 12 cubes HOMOGENEOUSLY distributed across the map
+    Heights DOUBLED: 3m -> 6m, 5m -> 10m
+    Grid layout: 4 columns x 3 rows covering the training area
     ================================================================================
     -->
 
-    <!-- Obstacle 1: Early in path (red cube) -->
+    <!-- Row 1 (South): y = -20 -->
     <model name="obstacle_1">
       <static>true</static>
-      <pose>-15 -15 1.5 0 0 0</pose>
+      <pose>-20 -20 3 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>3 3 3</size></box></geometry></collision>
+        <collision name="collision"><geometry><box><size>3 3 6</size></box></geometry></collision>
         <visual name="visual">
-          <geometry><box><size>3 3 3</size></box></geometry>
+          <geometry><box><size>3 3 6</size></box></geometry>
           <material>
             <ambient>0.8 0.2 0.2 1</ambient>
             <diffuse>0.8 0.2 0.2 1</diffuse>
@@ -159,14 +171,13 @@
       </link>
     </model>
 
-    <!-- Obstacle 2: Quarter way (orange cube) -->
     <model name="obstacle_2">
       <static>true</static>
-      <pose>-8 -10 1.5 0 0 0</pose>
+      <pose>-5 -18 3 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>3 3 3</size></box></geometry></collision>
+        <collision name="collision"><geometry><box><size>3 3 6</size></box></geometry></collision>
         <visual name="visual">
-          <geometry><box><size>3 3 3</size></box></geometry>
+          <geometry><box><size>3 3 6</size></box></geometry>
           <material>
             <ambient>0.9 0.5 0.1 1</ambient>
             <diffuse>0.9 0.5 0.1 1</diffuse>
@@ -175,14 +186,13 @@
       </link>
     </model>
 
-    <!-- Obstacle 3: Middle of path (yellow cube) -->
     <model name="obstacle_3">
       <static>true</static>
-      <pose>0 0 1.5 0 0 0</pose>
+      <pose>10 -20 3 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>3 3 3</size></box></geometry></collision>
+        <collision name="collision"><geometry><box><size>3 3 6</size></box></geometry></collision>
         <visual name="visual">
-          <geometry><box><size>3 3 3</size></box></geometry>
+          <geometry><box><size>3 3 6</size></box></geometry>
           <material>
             <ambient>0.9 0.9 0.1 1</ambient>
             <diffuse>0.9 0.9 0.1 1</diffuse>
@@ -191,14 +201,14 @@
       </link>
     </model>
 
-    <!-- Obstacle 4: Three quarters way (purple cube) -->
+    <!-- Row 2 (Middle-South): y = -5 -->
     <model name="obstacle_4">
       <static>true</static>
-      <pose>8 10 1.5 0 0 0</pose>
+      <pose>-18 -5 5 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>3 3 3</size></box></geometry></collision>
+        <collision name="collision"><geometry><box><size>3 3 10</size></box></geometry></collision>
         <visual name="visual">
-          <geometry><box><size>3 3 3</size></box></geometry>
+          <geometry><box><size>3 3 10</size></box></geometry>
           <material>
             <ambient>0.6 0.2 0.8 1</ambient>
             <diffuse>0.6 0.2 0.8 1</diffuse>
@@ -207,14 +217,13 @@
       </link>
     </model>
 
-    <!-- Obstacle 5: Near target - taller (cyan cube) -->
     <model name="obstacle_5">
       <static>true</static>
-      <pose>15 15 2.5 0 0 0</pose>
+      <pose>0 -3 3 0 0 0</pose>
       <link name="link">
-        <collision name="collision"><geometry><box><size>3 3 5</size></box></geometry></collision>
+        <collision name="collision"><geometry><box><size>3 3 6</size></box></geometry></collision>
         <visual name="visual">
-          <geometry><box><size>3 3 5</size></box></geometry>
+          <geometry><box><size>3 3 6</size></box></geometry>
           <material>
             <ambient>0.1 0.8 0.8 1</ambient>
             <diffuse>0.1 0.8 0.8 1</diffuse>
@@ -223,41 +232,108 @@
       </link>
     </model>
 
-    <!-- Training target marker (green sphere) -->
-    <model name="training_goal">
+    <model name="obstacle_6">
       <static>true</static>
-      <pose>20 20 2.5 0 0 0</pose>
+      <pose>15 -5 5 0 0 0</pose>
       <link name="link">
-        <collision name="collision">
-          <geometry>
-            <sphere><radius>0.8</radius></sphere>
-          </geometry>
-        </collision>
+        <collision name="collision"><geometry><box><size>3 3 10</size></box></geometry></collision>
         <visual name="visual">
-          <geometry>
-            <sphere><radius>0.8</radius></sphere>
-          </geometry>
+          <geometry><box><size>3 3 10</size></box></geometry>
           <material>
-            <ambient>0 1 0 1</ambient>
-            <diffuse>0 1 0 1</diffuse>
-            <emissive>0 0.5 0 1</emissive>
+            <ambient>0.2 0.6 0.2 1</ambient>
+            <diffuse>0.2 0.6 0.2 1</diffuse>
           </material>
         </visual>
       </link>
     </model>
 
-    <!-- Goal marker pole for better visibility -->
-    <model name="goal_pole">
+    <!-- Row 3 (Middle-North): y = 8 -->
+    <model name="obstacle_7">
       <static>true</static>
-      <pose>20 20 7 0 0 0</pose>
+      <pose>-15 8 3 0 0 0</pose>
       <link name="link">
-        <visual name="pole_visual">
-          <geometry>
-            <cylinder><radius>0.15</radius><length>14</length></cylinder>
-          </geometry>
+        <collision name="collision"><geometry><box><size>3 3 6</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>3 3 6</size></box></geometry>
           <material>
-            <ambient>0 1 0 1</ambient>
-            <diffuse>0 1 0 1</diffuse>
+            <ambient>0.8 0.4 0.6 1</ambient>
+            <diffuse>0.8 0.4 0.6 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_8">
+      <static>true</static>
+      <pose>-2 10 5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>3 3 10</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>3 3 10</size></box></geometry>
+          <material>
+            <ambient>0.4 0.4 0.8 1</ambient>
+            <diffuse>0.4 0.4 0.8 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_9">
+      <static>true</static>
+      <pose>12 8 3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>3 3 6</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>3 3 6</size></box></geometry>
+          <material>
+            <ambient>0.9 0.3 0.5 1</ambient>
+            <diffuse>0.9 0.3 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Row 4 (North): y = 20 -->
+    <model name="obstacle_10">
+      <static>true</static>
+      <pose>-20 20 5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>3 3 10</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>3 3 10</size></box></geometry>
+          <material>
+            <ambient>0.3 0.7 0.9 1</ambient>
+            <diffuse>0.3 0.7 0.9 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_11">
+      <static>true</static>
+      <pose>5 18 3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>3 3 6</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>3 3 6</size></box></geometry>
+          <material>
+            <ambient>0.7 0.5 0.3 1</ambient>
+            <diffuse>0.7 0.5 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_12">
+      <static>true</static>
+      <pose>20 20 5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>3 3 10</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>3 3 10</size></box></geometry>
+          <material>
+            <ambient>0.5 0.8 0.4 1</ambient>
+            <diffuse>0.5 0.8 0.4 1</diffuse>
           </material>
         </visual>
       </link>
@@ -265,7 +341,7 @@
 
     <gui fullscreen="0">
       <camera name="user_camera">
-        <pose>-35 -35 20 0 0.5 0.8</pose>
+        <pose>-35 -35 25 0 0.5 0.8</pose>
         <view_controller>orbit</view_controller>
       </camera>
     </gui>
