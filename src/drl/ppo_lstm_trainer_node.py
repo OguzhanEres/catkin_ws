@@ -153,17 +153,21 @@ class PPOLSTMTrainerNode:
 
         # === ROBUST LIDAR PARAMETERS ===
         # LiDAR max range for denormalization (sync with sensor_vectorizer)
-        self.lidar_max_range = float(rospy.get_param("~lidar_max_range", 10.0))
+        # Try to read from global param first (if set by vectorizer), else private
+        self.lidar_max_range = float(rospy.get_param("/agent/lidar_range_max", rospy.get_param("~lidar_max_range", 10.0)))
+        
         # Collision debounce: require N consecutive frames of collision to trigger
         self.collision_debounce_frames = int(rospy.get_param("~collision_debounce_frames", 3))
+        
         # Pitch threshold for ignoring low LiDAR readings (ground effect)
         self.pitch_ground_deg = float(rospy.get_param("~pitch_ground_deg", 15.0))
-        # Collision buffer for temporal filtering
+        
+        # Collision buffer for temporal filtering (stores 0/1)
         self._collision_buffer = collections.deque(maxlen=self.collision_debounce_frames)
+        
         # Proximity penalty parameters (quadratic penalty for obstacle avoidance)
-        self.k_prox = float(rospy.get_param("~k_prox", 2.0))  # Quadratic penalty coefficient
-        self.warning_distance = float(rospy.get_param("~warning_distance", 3.0))  # Start penalty at this distance
-        # Debug counter for lidar logging
+        self.k_prox = float(rospy.get_param("~k_prox", 2.0))
+        self.warning_distance = float(rospy.get_param("~warning_distance", 3.0))
         self._lidar_debug_counter = 0
 
         # === CONTINUOUS FLOW (Carrot-Stick) PARAMETERS ===
@@ -175,6 +179,7 @@ class PPOLSTMTrainerNode:
         self.map_x_max = float(rospy.get_param("~map_x_max", 300.0))
         self.map_y_min = float(rospy.get_param("~map_y_min", -300.0))
         self.map_y_max = float(rospy.get_param("~map_y_max", 300.0))
+        self.map_z_max = float(rospy.get_param("~map_z_max", 50.0))  # Max altitude ceiling
         # Counter for intermediate goals reached in current episode
         self._goals_reached_this_episode = 0
         self._current_step = 0
@@ -280,6 +285,7 @@ class PPOLSTMTrainerNode:
 
         self.route_pub = rospy.Publisher("/agent/route_raw", Path, queue_size=1)
         self.mode_pub = rospy.Publisher("/agent/mode", String, queue_size=1, latch=True)
+        self.goal_pub = rospy.Publisher("/agent/goal_pose", PoseStamped, queue_size=1, latch=True)
 
         self.lidar_sub = rospy.Subscriber("/agent/lidar_vec", Float32MultiArray, self._vec_cb("lidar"), queue_size=1)
         self.camera_sub = rospy.Subscriber("/agent/camera_vec", Float32MultiArray, self._vec_cb("camera"), queue_size=1)
@@ -527,6 +533,17 @@ class PPOLSTMTrainerNode:
         self.target_z = z
         self._target_local, self._target_world = self._resolve_targets()
         rospy.loginfo("NEW TARGET SET: (%.2f, %.2f, %.2f)", x, y, z)
+
+        # Publish goal pose for target marker visualization
+        # Use _target_world which contains the correct world coordinates
+        goal_msg = PoseStamped()
+        goal_msg.header.stamp = rospy.Time.now()
+        goal_msg.header.frame_id = "map"
+        goal_msg.pose.position.x = self._target_world[0]
+        goal_msg.pose.position.y = self._target_world[1]
+        goal_msg.pose.position.z = self._target_world[2]
+        goal_msg.pose.orientation.w = 1.0
+        self.goal_pub.publish(goal_msg)
 
     def _vec_cb(self, name: str):
         def _handler(msg: Float32MultiArray):
@@ -789,34 +806,35 @@ class PPOLSTMTrainerNode:
     def _check_collision_debounced(self, min_lidar_dist: Optional[float], step_count: int) -> bool:
         """
         Debounced collision detection with pitch-aware filtering.
-        
-        Returns True only if collision is confirmed over multiple frames.
-        Ignores low readings when drone is pitching significantly (ground effect).
+        Returns True only if collision is confirmed over majority of frames in buffer.
         """
         # Warmup period bypass
         if step_count <= self.warmup_steps:
             self._collision_buffer.clear()
             return False
+            
+        # 1. Determine if CURRENT frame is a collision candidate
+        is_collision_candidate = False
         
-        # Check if reading is valid
-        if min_lidar_dist is None:
-            self._collision_buffer.append(False)
-            return False
+        if min_lidar_dist is not None:
+             # Check collision threshold
+            if min_lidar_dist < self.collision_distance:
+                is_collision_candidate = True
+                
+                # OPTIONAL: Extra pitch check if vectorizer didn't catch it
+                # (Vectorizer already does this, but double safety doesn't hurt)
+                pitch_deg = abs(self._get_current_pitch_deg())
+                if pitch_deg > self.pitch_ground_deg and min_lidar_dist < 1.0:
+                    # Likely ground effect -> ignore
+                    is_collision_candidate = False
         
-        # Pitch-aware filtering: ignore low readings when pitching
-        pitch_deg = abs(self._get_current_pitch_deg())
-        if pitch_deg > self.pitch_ground_deg and min_lidar_dist < 1.0:
-            # Drone is pitching and seeing ground - ignore
-            self._collision_buffer.append(False)
-            return False
+        # 2. Update Buffer (1 for collision, 0 for safe/unknown)
+        self._collision_buffer.append(1 if is_collision_candidate else 0)
         
-        # Check collision threshold
-        is_collision_frame = min_lidar_dist < self.collision_distance
-        self._collision_buffer.append(is_collision_frame)
-        
-        # Require majority of frames in buffer to confirm collision
+        # 3. Vote
+        # Require >= 2 triggers in last 3 frames (or equivalent majority)
         collision_votes = sum(self._collision_buffer)
-        required_votes = max(1, self.collision_debounce_frames - 1)  # e.g., 2 out of 3
+        required_votes = max(1, self.collision_debounce_frames - 1)  # e.g. 2 for buffersize 3
         
         return collision_votes >= required_votes
 
@@ -1086,6 +1104,10 @@ class PPOLSTMTrainerNode:
         self._prev_pos = np.array(current) if current else None
         # Reset GPS spawn reference so next GPS reading becomes new reference
         self._spawn_gps = None
+        
+        # === CLEAR COLLISION BUFFER ===
+        # Prevent "carry-over" collisions from previous episode
+        self._collision_buffer.clear()
 
         # === GENERATE INITIAL TARGET ===
         # Ensure target is at least min_goal_dist_at_spawn away from spawn position
@@ -1714,6 +1736,8 @@ class PPOLSTMTrainerNode:
                 out_reason = f"y={y:.1f} < y_min={y_min_bound:.1f}"
             elif y > y_max_bound:
                 out_reason = f"y={y:.1f} > y_max={y_max_bound:.1f}"
+            elif z > self.map_z_max:
+                out_reason = f"z={z:.1f} > z_max={self.map_z_max:.1f}"
 
             if out_reason:
                 reward = self.crash_penalty

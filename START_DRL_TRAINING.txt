@@ -81,16 +81,33 @@ Açıklama:
 TERMINAL 2: PX4 SITL (Software In The Loop)
 ================================================================================
 
+YÖNTEM 1 - ÖNERİLEN (Gazebo Classic ile Doğru Entegrasyon):
 cd ~/PX4-Autopilot/build/px4_sitl_default
 export PX4_SIM_HOST_ADDR=127.0.0.1
-./bin/px4 -s etc/init.d-posix/rcS -w rootfs
+export PX4_SYS_AUTOSTART=10015
+./bin/px4 -d -s etc/init.d-posix/rcS -w rootfs
+
+
+
+YÖNTEM 2 - Manuel Başlatma (Parametreler hazırsa):
+cd ~/PX4-Autopilot/build/px4_sitl_default
+export PX4_SIM_HOST_ADDR=127.0.0.1
+export PX4_SIM_MODEL=iris
+export PX4_SIMULATOR=gazebo-classic
+./bin/px4 -d -s etc/init.d-posix/rcS -w rootfs
+
+
+YÖNTEM 3 - Basit (Sadece test için):
+cd ~/PX4-Autopilot/build/px4_sitl_default
+./bin/px4 -d
 
 
 Açıklama:
-- PX4 flight controller simülasyonunu başlatır
-- Gazebo ile mavlink_interface plugin üzerinden iletişim kurar
+- Yöntem 1: PX4 make sistemi doğru parametreleri otomatik ayarlar
+- Yöntem 2: Gazebo Classic simülatörünü manuel belirtir
+- Yöntem 3: Varsayılan ayarlarla başlatır
 - MAVLink portu: TCP 4560 (Gazebo), UDP 14540 (MAVROS)
-- İlk başlatmada yukarıdaki parametreleri ayarlayın
+- İlk başlatmada aşağıdaki parametreleri ayarlayın
 
 
 Not: Eğer "PX4 server already running" hatası alırsanız:

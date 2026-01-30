@@ -23,7 +23,8 @@ class TargetMarkerNode:
             "~model_path",
             os.path.expanduser("~/Desktop/catkin_ws/src/ardupilot_city_sim/models/target_marker_red/model.sdf"),
         )
-        self.setpoint_topic = rospy.get_param("~setpoint_topic", "/mavros/setpoint_position/local")
+        # Changed to use actual goal pose instead of intermediate setpoints
+        self.setpoint_topic = rospy.get_param("~setpoint_topic", "/agent/goal_pose")
         self.frame_id = rospy.get_param("~frame_id", "map")
 
         self._spawned = False
@@ -67,11 +68,22 @@ class TargetMarkerNode:
 
     def _setpoint_cb(self, msg: PoseStamped):
         if not self._spawned:
+            rospy.logwarn_throttle(2.0, "Marker not spawned yet, ignoring goal pose")
             return
+        rospy.loginfo_throttle(2.0, "Received goal pose: (%.2f, %.2f, %.2f)",
+                              msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
         self._last_pose = msg
         state = ModelState()
         state.model_name = self.model_name
+
+        # Goal pose comes in MAVROS local frame (origin at spawn point)
+        # Convert to Gazebo world frame by adding spawn coordinates
+        # Spawn is at (-25, -25, 0.1) in Gazebo world
+        # Gazebo world = MAVROS local + spawn_position
         state.pose = msg.pose
+        # Goal pose is already in Gazebo world frame (from ppo_lstm_trainer_node)
+        # No offset needed.
+
         state.reference_frame = self.frame_id
         self.state_pub.publish(state)
 

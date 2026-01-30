@@ -25,11 +25,11 @@
     <param name="gps_topic" value="/mavros/global_position/raw/fix"/>
     <!-- LiDAR processing params -->
     <param name="lidar_bins" value="180"/>
-    <param name="lidar_fov_deg" value="60.0"/>  <!-- Narrow FOV: ±30° for virtual gimbal effect -->
+    <param name="lidar_fov_deg" value="120.0"/>  <!-- Wide FOV: Detect side obstacles (Safe limit < 68deg to avoid props) -->
     <param name="lidar_front_center_deg" value="0.0"/>
     <!-- Ground effect filter params -->
     <param name="pitch_ground_deg" value="15.0"/>  <!-- Pitch threshold for ground filter -->
-    <param name="ground_min_range_m" value="0.50"/>  <!-- Min range to ignore when pitching -->
+    <param name="ground_min_range_m" value="0.25"/>  <!-- Min range to ignore when pitching (< collision_distance) -->
     <param name="use_dynamic_ground_filter" value="false"/>  <!-- Use altitude-based filter -->
     <param name="ground_margin" value="1.15"/>  <!-- Safety margin for dynamic filter -->
     <param name="debug_interval" value="0"/>  <!-- 0=disabled, N=log every N frames -->
@@ -44,6 +44,9 @@
     <param name="loop_forever" value="true"/>
     <param name="checkpoint_path" value="$(find drl)/models/ppo_lstm_checkpoint.pt"/>
     <param name="auto_param_tune" value="false"/>
+    <!-- Accelerated Learning Params for Sensor Adaptation -->
+    <param name="lr" value="0.0001"/>  <!-- 1e-4 (was 5e-5) -->
+    <param name="entropy_coef" value="0.02"/>  <!-- Reduced entropy for stability (was 0.1) -->
     <param name="preflight_gate" value="true"/>
     <param name="preflight_timeout" value="45.0"/>
     <param name="preflight_stable_time" value="2.0"/>
@@ -87,6 +90,7 @@
     <param name="map_x_max" value="30.0"/>
     <param name="map_y_min" value="-35.0"/>
     <param name="map_y_max" value="30.0"/>
+    <param name="map_z_max" value="30.0"/>  <!-- Ceiling limit to prevent altitude escape -->
     <!-- Warmup: disable termination checks for first N steps (allow takeoff) -->
     <param name="warmup_steps" value="60"/>
     <!-- Collision distance - very low to prevent false positives from self-collision -->
@@ -100,6 +104,7 @@
     <param name="warning_distance" value="3.0"/>  <!-- Start penalty at this distance (meters) -->
     <!-- Minimum altitude before altitude crash (very low to allow takeoff fluctuations) -->
     <param name="min_alt" value="0.05"/>
+    <param name="max_drift_distance" value="150.0"/>  <!-- Absolute failsafe (Map diagonal + margin) -->
   </node>
 
   <group if="$(arg use_vision_bridge)">
@@ -141,7 +146,7 @@
   <node pkg="drl" type="target_marker_node.py" name="target_marker" output="screen" >
     <param name="model_name" value="target_marker_red"/>
     <param name="model_path" value="$(find ardupilot_city_sim)/models/target_marker_red/model.sdf"/>
-    <param name="setpoint_topic" value="/mavros/setpoint_position/local"/>
+    <param name="setpoint_topic" value="/agent/goal_pose"/>
     <param name="frame_id" value="map"/>
   </node>
 
@@ -158,9 +163,9 @@
     <param name="parent_frame" value="map"/>
     <param name="child_frame" value="base_link"/>
   </node>
-  <!-- lidar_link is at front of drone (0.35m forward from base_link) -->
+  <!-- lidar_link is at front of drone (matches SDF: 0.18m forward) -->
   <node pkg="tf2_ros" type="static_transform_publisher" name="tf_base_lidar"
-        args="0.35 0 0 0 0 0 base_link lidar_link"/>
+        args="0.18 0 0.12 0 0 0 base_link lidar_link"/>
 
   <!-- RViz visualization -->
   <arg name="rviz" default="true"/>
