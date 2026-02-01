@@ -472,6 +472,7 @@ class PPOLSTMTrainerNode:
             'avg_alt': round(avg_altitude, 2),
             'steps_per_goal': steps_per_goal,
             'dist_per_goal': dist_per_goal,
+            'termination': termination_reason,
         }
         self._epoch_metrics.append(metrics)
 
@@ -565,8 +566,12 @@ class PPOLSTMTrainerNode:
             self._last_local_odom_stamp = rospy.Time.now()
 
     def _state_cb(self, msg: State):
-        if self.last_state is not None and self.last_state.mode != msg.mode:
-            rospy.logwarn(f"MODE CHANGE: {self.last_state.mode} -> {msg.mode}")
+        if self.last_state is not None:
+            if self.last_state.mode != msg.mode:
+                rospy.logwarn(f"MODE CHANGE: {self.last_state.mode} -> {msg.mode}")
+            if self.last_state.armed != msg.armed:
+                status = "ARMED" if msg.armed else "DISARMED"
+                rospy.logwarn(f"ARMING STATE CHANGED: -> {status}")
         self.last_state = msg
 
     def _gazebo_cb(self, msg: ModelStates):
@@ -1343,6 +1348,13 @@ class PPOLSTMTrainerNode:
         self.hidden = (h, c)
 
     def _current_position(self) -> Optional[Tuple[float, float, float]]:
+        if self.last_gazebo_pose is not None:
+            if not self._pose_source_notice:
+                rospy.loginfo("Using Gazebo Ground Truth for position (Bypassing EKF)")
+                self._pose_source_notice = True
+            pos = self.last_gazebo_pose.pose.position
+            return float(pos.x), float(pos.y), float(pos.z)
+
         if self.last_pose is not None and self._last_pose_stamp is not None:
             age = (rospy.Time.now() - self._last_pose_stamp).to_sec()
             if 0.0 <= age <= self.pose_timeout:
@@ -1468,11 +1480,8 @@ class PPOLSTMTrainerNode:
         if current is None:
             return None
 
-        # Use local or world target based on pose source
-        if self._using_local_pose():
-            tx, ty, tz = self._target_local
-        else:
-            tx, ty, tz = self._target_world
+        # Always use world frame since _current_position() returns Gazebo world coords
+        tx, ty, tz = self._target_world
 
         # Compute relative vector to target (normalized direction + distance)
         dx = tx - current[0]
@@ -1557,10 +1566,8 @@ class PPOLSTMTrainerNode:
         current = self._current_position()
         if current is None:
             return None
-        if self._using_local_pose():
-            tx, ty, tz = self._target_local
-        else:
-            tx, ty, tz = self._target_world
+        # Always use world frame since _current_position() returns Gazebo world coords
+        tx, ty, tz = self._target_world
         dx = current[0] - tx
         dy = current[1] - ty
         dz = current[2] - tz
@@ -1579,7 +1586,19 @@ class PPOLSTMTrainerNode:
     def _build_route(self, action: np.ndarray) -> Path:
         direction = action[:3].astype(np.float32)
         if not self.use_z_action:
-            direction[2] = 0.0
+            # P-Control to maintain target altitude
+            current = self._current_position()
+            if current is not None:
+                # We want to go towards target_z
+                dz = self.target_z - current[2]
+                # Clamp to [-1, 1] to match action space magnitude
+                # BOOSTED GAIN: 2.0 (Full throttle if >0.5m error)
+                direction[2] = np.clip(dz * 2.0, -1.0, 1.0)
+                
+                rospy.loginfo_throttle(2.0, "Z-Control: Alt=%.2fm Target=%.2fm Err=%.2fm Action=%.2f",
+                                      current[2], self.target_z, dz, direction[2])
+            else:
+                direction[2] = 0.0
         norm = np.linalg.norm(direction)
         if norm < 1e-6:
             direction = np.array([1.0, 0.0, 0.0], dtype=np.float32)
@@ -1852,7 +1871,7 @@ class PPOLSTMTrainerNode:
         # This forces the drone to turn its nose toward the goal
         current_yaw = self._get_current_yaw()
         if current:
-            tx, ty = self._target_local[:2] if self._using_local_pose() else self._target_world[:2]
+            tx, ty = self._target_world[:2]  # Always world frame (Gazebo)
             dx_yaw = tx - current[0]
             dy_yaw = ty - current[1]
             target_yaw = math.atan2(dy_yaw, dx_yaw)
@@ -1954,6 +1973,7 @@ class PPOLSTMTrainerNode:
         if self.epochs <= 0:
             return
 
+        last_termination_reason = ""
         while not rospy.is_shutdown():
             for _ in range(self.epochs):
                 epoch_index += 1
@@ -1983,19 +2003,37 @@ class PPOLSTMTrainerNode:
                         # Soft start: RTH already done at episode end, just continue
                         rospy.loginfo("Soft start: Drone already airborne from RTH")
                 else:
-                    # Safety Net: Check if agent drifted too far from spawn
+                    # CONTINUOUS LEARNING MODE
+                    force_hard_reset = False
+                    if last_termination_reason in ["OUT_OF_BOUNDS", "COLLISION", "ALTITUDE_CRASH", "STUCK"]:
+                         rospy.logwarn("Hard Reset triggered by Critical Failure: %s", last_termination_reason)
+                         force_hard_reset = True
+
+                    # EXPLICIT MAP BOUNDARY CHECK (Fixes restart-outside-map bug)
+                    current_pos = self._current_position()
+                    if current_pos:
+                        cx, cy, _ = current_pos
+                        # Add 1.0m buffer to be safe
+                        if not ((self.map_x_min - 1.0) <= cx <= (self.map_x_max + 1.0) and 
+                                (self.map_y_min - 1.0) <= cy <= (self.map_y_max + 1.0)):
+                            rospy.logwarn("Current pos (%.1f, %.1f) is OUTSIDE MAP. Forcing Hard Reset.", cx, cy)
+                            force_hard_reset = True
+
+                    # Check if agent drifted too far (Safety Net)
                     drift_dist = self._distance_to_spawn()
                     if drift_dist is not None and drift_dist > self.max_drift_distance:
                         rospy.logwarn("Drift limit exceeded (%.1fm > %.1fm) - forcing respawn to base",
                                      drift_dist, self.max_drift_distance)
+                        force_hard_reset = True
+
+                    if force_hard_reset:
                         self._reset_episode()
                         if not self._wait_until_airborne(30.0):
                             rospy.logwarn("Respawn failed (not airborne). Continuing anyway.")
                     else:
-                        # LSTM hidden state preserved across epochs for continuity
-                        # Only reset when episode truly resets (reset_each_epoch=True)
-                        # self._reset_hidden()  # DISABLED: Prevents "lobotomy" - agent keeps memory
-                        self._reset_frame_buffer()
+                        # Soft Reset: Continue from CURRENT position with NEW target
+                        # This enables "chaining" episodes without RTH
+                        self._soft_reset_episode()
                 obs_list: List[np.ndarray] = []
                 action_list: List[np.ndarray] = []
                 logp_list: List[float] = []
@@ -2182,6 +2220,9 @@ class PPOLSTMTrainerNode:
                 rospy.loginfo("  Result: %s | Steps: %d | Reward: %.2f | Final Dist: %.2fm",
                              termination_reason, len(obs_list), rewards.sum(),
                              final_dist if final_dist else -1)
+                
+                # Propagate reason to next epoch for reset decision
+                last_termination_reason = termination_reason
 
                 if not self.loop_forever and epoch_index >= self.epochs:
                     self._save_metrics(force=True)

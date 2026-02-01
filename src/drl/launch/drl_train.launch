@@ -6,7 +6,7 @@
   <arg name="takeoff_alt" default="3.0"/>
   <arg name="use_vision_bridge" default="true"/>
   <arg name="vision_model_name" default="iris_px4_sensors"/>
-  <arg name="reset_each_epoch" default="true"/>
+  <arg name="reset_each_epoch" default="false"/>
   <arg name="auto_arm" default="true"/>
   <arg name="use_px4_arm_takeoff" default="true"/>
 
@@ -75,17 +75,18 @@
     <param name="target_z" value="3.0"/>
     <param name="target_in_world" value="true"/>
     <!-- Larger goal radius for easier success -->
-    <param name="goal_radius" value="5.0"/>
+    <param name="goal_radius" value="2.0"/>
     <param name="spawn_x" value="-25.0"/>
     <param name="spawn_y" value="-25.0"/>
-    <param name="spawn_z" value="0.1"/>
+    <param name="spawn_z" value="2.0"/>
     <param name="spawn_yaw" value="0.785"/>
     <!-- Random spawn for training variety (breaks deterministic start trap) -->
     <param name="random_spawn" value="true"/>
     <rosparam param="spawn_area_x">[-30.0, -20.0]</rosparam>
     <rosparam param="spawn_area_y">[-30.0, -20.0]</rosparam>
     <param name="model_name" value="$(arg vision_model_name)"/>
-    <!-- Map boundaries - generous to prevent instant OUT_OF_BOUNDS -->
+    <!-- Map boundaries - Open World (Walls Removed) -->
+    <!-- Generous limits to allow exploration -->
     <param name="map_x_min" value="-35.0"/>
     <param name="map_x_max" value="30.0"/>
     <param name="map_y_min" value="-35.0"/>
@@ -125,7 +126,8 @@
     <param name="route_out" value="/agent/route_smoothed"/>
   </node>
 
-  <node pkg="drl" type="setpoint_follower_node.py" name="setpoint_follower" output="screen">
+    <node pkg="drl" type="setpoint_follower_node.py" name="setpoint_follower" output="screen">
+    <param name="model_name" value="$(arg vision_model_name)"/>
     <param name="route_topic" value="/agent/route_smoothed"/>
     <param name="acceptance_radius" value="0.5"/>
     <param name="pose_topic" value="/mavros/local_position/pose"/>

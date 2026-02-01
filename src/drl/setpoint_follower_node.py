@@ -25,6 +25,7 @@ import rospy
 from geometry_msgs.msg import PoseStamped, Point
 from nav_msgs.msg import Path
 from mavros_msgs.msg import State
+from gazebo_msgs.msg import ModelStates
 from std_msgs.msg import Empty
 
 
@@ -41,6 +42,7 @@ class SetpointFollowerNode:
     def __init__(self):
         rospy.init_node("setpoint_follower", anonymous=False)
 
+        self.model_name = rospy.get_param("~model_name", "iris_px4_sensors")
         self.route_topic = rospy.get_param("~route_topic", "/agent/route_smoothed")
         self.pose_topic = rospy.get_param("~pose_topic", "/mavros/local_position/pose")
         self.setpoint_topic = rospy.get_param("~setpoint_topic", "/mavros/setpoint_position/local")
@@ -62,12 +64,17 @@ class SetpointFollowerNode:
         self.force_ned = bool(rospy.get_param("~force_ned", False))
 
         self.last_pose: Optional[PoseStamped] = None
+        self.last_gazebo_pose: Optional[PoseStamped] = None  # NEW: Separate Truth Storage
         self.last_state: Optional[State] = None
         self.target: Optional[Target] = None
         self._ned_frame: Optional[bool] = None
         self._ned_votes = 0
         self._enu_votes = 0
         self._airborne_confirmed = False
+        
+        # Ground Truth support
+        self._gazebo_index: Optional[int] = None
+        self._gazebo_sub = rospy.Subscriber("/gazebo/model_states", ModelStates, self._gazebo_cb, queue_size=1)
 
         # Use setpoint_position/local (PoseStamped) - doesn't require global origin
         # Note: PX4 may ignore orientation from PoseStamped, but position works reliably
@@ -81,16 +88,19 @@ class SetpointFollowerNode:
         self.timer = rospy.Timer(rospy.Duration.from_sec(1.0 / max(1.0, self.publish_rate)), self._tick)
 
         rospy.loginfo(
-            "SetpointFollower params: route_topic=%s pose_topic=%s setpoint_topic=%s reached_topic=%s acceptance=%.2f rate=%.1f",
+            "SetpointFollower params: route_topic=%s pose_topic=%s setpoint_topic=%s reached_topic=%s acceptance=%.2f rate=%.1f model=%s",
             self.route_topic,
             self.pose_topic,
             self.setpoint_topic,
             self.reached_topic,
             self.acceptance_radius,
             self.publish_rate,
+            self.model_name
         )
 
     def _pose_cb(self, msg: PoseStamped):
+        # Always update MAVROS pose for Relative Control
+            
         self.last_pose = msg
         z = float(msg.pose.position.z)
         if self.force_enu:
@@ -98,23 +108,26 @@ class SetpointFollowerNode:
             self._ned_votes = 0
             self._enu_votes = 3
             return
-        if self.force_ned:
-            self._ned_frame = True
-            self._ned_votes = 3
-            self._enu_votes = 0
-            return
-        # Lightweight frame heuristic: small hysteresis so we don't stick to NED
-        # after an early negative reading.
-        if z < -0.1:
-            self._ned_votes += 1
-            self._enu_votes = max(0, self._enu_votes - 1)
-        elif z > 0.1:
-            self._enu_votes += 1
-            self._ned_votes = max(0, self._ned_votes - 1)
-        if self._ned_votes >= 3:
-            self._ned_frame = True
-        elif self._enu_votes >= 3:
-            self._ned_frame = False
+
+    def _gazebo_cb(self, msg: ModelStates):
+        if self._gazebo_index is None:
+            try:
+                self._gazebo_index = msg.name.index(self.model_name)
+                rospy.loginfo("Found Gazebo model '%s' at index %d", self.model_name, self._gazebo_index)
+            except ValueError:
+                return
+        
+        # Save Ground Truth separately
+        pose = msg.pose[self._gazebo_index]
+        ps = PoseStamped()
+        ps.header.stamp = rospy.Time.now()
+        ps.header.frame_id = "map"  # Gazebo is global map
+        ps.pose = pose
+        
+        self.last_gazebo_pose = ps
+        # No need to overwrite last_pose, we use last_gazebo_pose for logic checks
+
+        # No need for NED heuristics here, Gazebo is ENU.
 
     def _state_cb(self, msg: State):
         self.last_state = msg
@@ -141,9 +154,15 @@ class SetpointFollowerNode:
         )
         offset = (float(offset_point.x), float(offset_point.y), float(offset_point.z))
 
-        # Check current altitude - don't allow XY movement if too low (prevents ground collision)
-        ned = bool(self._ned_frame) if self._ned_frame is not None else False
-        current_alt = abs(origin[2]) if ned else origin[2]
+        # TRUTH FRAME (GAZEBO): Use for Safety Checks (Altitude)
+        # If Gazebo available, use it. Else fallback to MAVROS (origin)
+        if self.last_gazebo_pose is not None:
+             true_z = float(self.last_gazebo_pose.pose.position.z)
+             current_alt = true_z
+        else:
+             ned = bool(self._ned_frame) if self._ned_frame is not None else False
+             current_alt = abs(origin[2]) if ned else origin[2]
+
         min_safe_alt = self.takeoff_alt - 0.5  # Need to be at least this high for XY movement
 
         if current_alt < min_safe_alt:
@@ -164,7 +183,7 @@ class SetpointFollowerNode:
         current_alt = abs(origin[2]) if ned else origin[2]
         if current_alt >= self.min_alt_for_control:
             self._airborne_confirmed = True
-        safe_min = max(self.min_z, self.takeoff_alt if self._airborne_confirmed else self.min_z)
+        safe_min = self.min_z  # Allow descent down to min_z (e.g., 0.5m) even after takeoff
         safe_max = max(safe_min, float(self.max_target_z))
         desired_alt = max(safe_min, min(safe_max, abs(absolute[2]) if ned else absolute[2]))
         if ned:
@@ -215,11 +234,17 @@ class SetpointFollowerNode:
             if self.require_guided and (self.last_state is None or self.last_state.mode != self.required_mode):
                 return
         # Update airborne status
-        z = float(self.last_pose.pose.position.z)
-        ned = bool(self._ned_frame) if self._ned_frame is not None else False
-        alt = abs(z) if ned else z
-        if alt >= self.min_alt_for_control:
-            self._airborne_confirmed = True
+        # Use Truth if available, else MAVROS
+        if self.last_gazebo_pose is not None:
+             true_z = float(self.last_gazebo_pose.pose.position.z)
+             if true_z >= self.min_alt_for_control:
+                 self._airborne_confirmed = True
+        else:
+             z = float(self.last_pose.pose.position.z)
+             ned = bool(self._ned_frame) if self._ned_frame is not None else False
+             alt = abs(z) if ned else z
+             if alt >= self.min_alt_for_control:
+                 self._airborne_confirmed = True
 
         # Publish setpoint using PoseStamped (doesn't require global origin)
         setpoint = PoseStamped()

@@ -1,2 +1,0 @@
-timestamp,run_id,global_ep,epoch,steps,reward,success,goals,total_dist,avg_alt,steps_per_goal,dist_per_goal
-2026-02-01 14:42:31,468f4658,2,1,498,2899.24,1,9,342.88,3.25,55.33,38.1
