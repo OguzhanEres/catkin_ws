@@ -565,6 +565,8 @@ class PPOLSTMTrainerNode:
             self._last_local_odom_stamp = rospy.Time.now()
 
     def _state_cb(self, msg: State):
+        if self.last_state is not None and self.last_state.mode != msg.mode:
+            rospy.logwarn(f"MODE CHANGE: {self.last_state.mode} -> {msg.mode}")
         self.last_state = msg
 
     def _gazebo_cb(self, msg: ModelStates):

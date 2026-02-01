@@ -44,9 +44,9 @@
     <param name="loop_forever" value="true"/>
     <param name="checkpoint_path" value="$(find drl)/models/ppo_lstm_checkpoint.pt"/>
     <param name="auto_param_tune" value="false"/>
-    <!-- Accelerated Learning Params for Sensor Adaptation -->
-    <param name="lr" value="0.0001"/>  <!-- 1e-4 (was 5e-5) -->
-    <param name="entropy_coef" value="0.02"/>  <!-- Reduced entropy for stability (was 0.1) -->
+    <!-- Standard Learning Params -->
+    <param name="lr" value="5e-5"/>
+    <param name="entropy_coef" value="0.05"/>
     <param name="preflight_gate" value="true"/>
     <param name="preflight_timeout" value="45.0"/>
     <param name="preflight_stable_time" value="2.0"/>
