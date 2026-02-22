@@ -10,6 +10,15 @@
   <arg name="auto_arm" default="true"/>
   <arg name="use_px4_arm_takeoff" default="true"/>
 
+  <!-- EKF2 Vision Configuration - DISABLED (params already set in PX4) -->
+  <!-- If you need to reset EKF2 params, run: rosrun drl ekf2_config_node.py manually -->
+  <!--
+  <node pkg="drl" type="ekf2_config_node.py" name="ekf2_config" output="screen" if="$(arg use_vision_bridge)">
+    <param name="timeout" value="30.0"/>
+    <param name="retry_count" value="5"/>
+  </node>
+  -->
+
   <!-- PX4 Arm/Takeoff node - runs first to arm and enter OFFBOARD mode -->
   <node pkg="drl" type="px4_arm_takeoff.py" name="px4_arm_takeoff" output="screen" if="$(arg use_px4_arm_takeoff)">
     <param name="takeoff_alt" value="$(arg takeoff_alt)"/>

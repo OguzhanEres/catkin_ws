@@ -1,0 +1,41 @@
+# PX4 EKF2 Parameters for Vision-Based Navigation
+# Place this file in PX4 SITL startup configuration
+# Usage: PX4_SIM_MODEL=iris PX4_ESTIMATOR=ekf2 make px4_sitl_default gazebo
+
+# ===== VISION FUSION CONFIGURATION =====
+# EKF2_EV_CTRL: External Vision Control Bitmask
+# Bit 0 (1): Horizontal position
+# Bit 1 (2): Vertical position
+# Bit 2 (4): Velocity
+# Bit 3 (8): Yaw
+param set EKF2_EV_CTRL 15
+
+# EKF2_HGT_REF: Height Reference Source
+# 0 = Barometer, 1 = GPS, 2 = Range, 3 = Vision
+param set EKF2_HGT_REF 3
+
+# ===== DISABLE CONFLICTING SENSORS =====
+# Disable GPS fusion (conflicts with vision)
+param set EKF2_GPS_CTRL 0
+
+# Disable Barometer fusion (conflicts with vision height)
+param set EKF2_BARO_CTRL 0
+
+# ===== VISION DELAY/OFFSET CONFIGURATION =====
+param set EKF2_EV_DELAY 0
+param set EKF2_EV_POS_X 0
+param set EKF2_EV_POS_Y 0
+param set EKF2_EV_POS_Z 0
+
+# ===== VISION NOISE CONFIGURATION =====
+param set EKF2_EVP_NOISE 0.05
+param set EKF2_EVV_NOISE 0.1
+
+# ===== ARMING/SAFETY FOR SIMULATION =====
+param set CBRK_SUPPLY_CHK 894281
+param set CBRK_IO_SAFETY 22027
+param set COM_ARM_WO_GPS 1
+param set SYS_HAS_GPS 0
+
+# ===== COMMIT CHANGES =====
+param save

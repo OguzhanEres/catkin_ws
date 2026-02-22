@@ -178,13 +178,32 @@ class SetpointFollowerNode:
 
         absolute = (origin[0] + offset[0], origin[1] + offset[1], origin[2] + offset[2])
 
+        # CRITICAL: Frame Offset Compensation for Z-axis
+        # If MAVROS and Gazebo disagree on altitude, we need to compensate
+        # MAVROS target must account for the offset to reach the TRUE target altitude
+        if self.last_gazebo_pose is not None:
+            gazebo_z = float(self.last_gazebo_pose.pose.position.z)
+            mavros_z = origin[2]
+            z_frame_offset = mavros_z - gazebo_z  # Positive if MAVROS reads higher than reality
+            
+            # The trainer calculates offset based on Gazebo (true) altitude
+            # To reach true target, we must compensate for frame offset
+            # Desired Gazebo Z = gazebo_z + offset[2]
+            # Required MAVROS Z = Desired Gazebo Z + z_frame_offset
+            desired_gazebo_z = gazebo_z + offset[2]
+            compensated_z = desired_gazebo_z + z_frame_offset
+            absolute = (absolute[0], absolute[1], compensated_z)
+            
+            rospy.loginfo_throttle(2.0, "Z-Frame: MAVROS=%.2f Gazebo=%.2f Offset=%.2f Target=%.2f", 
+                                  mavros_z, gazebo_z, z_frame_offset, compensated_z)
+
         # Enforce safe Z target: do not climb/descend aggressively during training.
         ned = bool(self._ned_frame) if self._ned_frame is not None else False
         current_alt = abs(origin[2]) if ned else origin[2]
         if current_alt >= self.min_alt_for_control:
             self._airborne_confirmed = True
         safe_min = self.min_z  # Allow descent down to min_z (e.g., 0.5m) even after takeoff
-        safe_max = max(safe_min, float(self.max_target_z))
+        safe_max = max(safe_min, float(self.max_target_z) + 3.0)  # Allow higher to compensate for offset
         desired_alt = max(safe_min, min(safe_max, abs(absolute[2]) if ned else absolute[2]))
         if ned:
             absolute = (absolute[0], absolute[1], -desired_alt)

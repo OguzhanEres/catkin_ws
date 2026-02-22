@@ -962,6 +962,12 @@ class PPOLSTMTrainerNode:
                 "timeout_penalty": -5.0,      # Small timeout penalty
                 "target_bias": 0.7,           # Strong guidance toward goal
                 "progress_scale": 10.0,       # Good progress signal
+                # Domain Randomization - CLEAN ENVIRONMENT
+                "sensor_noise": 0.0,          # No sensor noise
+                "lidar_noise": 0.0,           # No LiDAR noise
+                "imu_noise": 0.0,             # No IMU noise
+                "wind_speed": 0.0,            # No wind
+                "wind_variance": 0.0,         # No wind variance
             },
             1: {  # MEDIUM - Learn obstacle avoidance (Stage 2 world)
                 "name": "Medium (Static obstacles)",
@@ -975,6 +981,12 @@ class PPOLSTMTrainerNode:
                 "timeout_penalty": -10.0,     # Moderate timeout penalty
                 "target_bias": 0.4,           # Less guidance, more autonomy
                 "progress_scale": 10.0,
+                # Domain Randomization - MILD REAL-WORLD CONDITIONS
+                "sensor_noise": 0.05,         # 5% sensor noise
+                "lidar_noise": 0.05,          # 5% LiDAR noise (range variance)
+                "imu_noise": 0.02,            # 2% IMU noise
+                "wind_speed": 1.0,            # 1 m/s average wind
+                "wind_variance": 0.5,         # ±0.5 m/s wind variance
             },
             2: {  # HARD - Full challenge (Stage 3 city world)
                 "name": "Hard (City environment)",
@@ -988,6 +1000,12 @@ class PPOLSTMTrainerNode:
                 "timeout_penalty": -15.0,     # Higher timeout penalty
                 "target_bias": 0.2,           # Minimal guidance, full autonomy
                 "progress_scale": 10.0,
+                # Domain Randomization - CHALLENGING REAL-WORLD CONDITIONS
+                "sensor_noise": 0.10,         # 10% sensor noise
+                "lidar_noise": 0.08,          # 8% LiDAR noise
+                "imu_noise": 0.05,            # 5% IMU noise
+                "wind_speed": 2.0,            # 2 m/s average wind
+                "wind_variance": 1.0,         # ±1 m/s wind variance
             },
         }
         return configs.get(self.curriculum_level, configs[2])
@@ -1005,6 +1023,13 @@ class PPOLSTMTrainerNode:
         self.timeout_penalty = config["timeout_penalty"]
         self.collision_distance = config["collision_distance"]
         self.progress_scale = config["progress_scale"]
+        
+        # Domain Randomization parameters
+        self.sensor_noise = config.get("sensor_noise", 0.0)
+        self.lidar_noise = config.get("lidar_noise", 0.0)
+        self.imu_noise = config.get("imu_noise", 0.0)
+        self.wind_speed = config.get("wind_speed", 0.0)
+        self.wind_variance = config.get("wind_variance", 0.0)
 
         rospy.loginfo(
             "=== Curriculum Level %d: %s ===",
@@ -1018,6 +1043,11 @@ class PPOLSTMTrainerNode:
             "  rewards: intermediate=%.0f, crash=%.0f, timeout=%.0f, target_bias=%.1f",
             config["intermediate_bonus"], config["crash_penalty"],
             config["timeout_penalty"], config["target_bias"]
+        )
+        rospy.loginfo(
+            "  noise: sensor=%.1f%%, lidar=%.1f%%, imu=%.1f%%, wind=%.1fm/s±%.1f",
+            self.sensor_noise * 100, self.lidar_noise * 100, self.imu_noise * 100,
+            self.wind_speed, self.wind_variance
         )
 
     def _update_curriculum(self, success: bool):
@@ -1518,12 +1548,31 @@ class PPOLSTMTrainerNode:
         if norm_gps is None:
             return None
 
+        # Get sensor vectors
+        lidar_vec = self.latest_vecs["lidar"].copy()
+        camera_vec = self.latest_vecs["camera"].copy()
+        imu_vec = self.latest_vecs["imu"].copy()
+        gyro_vec = self.latest_vecs["gyro"].copy()
+        
+        # Apply Domain Randomization noise (only if curriculum level > 0)
+        if hasattr(self, 'lidar_noise') and self.lidar_noise > 0:
+            lidar_vec += np.random.normal(0, self.lidar_noise, lidar_vec.shape).astype(np.float32)
+            lidar_vec = np.clip(lidar_vec, 0.0, 1.0)  # Keep in valid range
+        
+        if hasattr(self, 'sensor_noise') and self.sensor_noise > 0:
+            camera_vec += np.random.normal(0, self.sensor_noise, camera_vec.shape).astype(np.float32)
+            camera_vec = np.clip(camera_vec, 0.0, 1.0)
+        
+        if hasattr(self, 'imu_noise') and self.imu_noise > 0:
+            imu_vec += np.random.normal(0, self.imu_noise, imu_vec.shape).astype(np.float32)
+            gyro_vec += np.random.normal(0, self.imu_noise, gyro_vec.shape).astype(np.float32)
+
         parts = [
             target_vec,  # 6 values: direction to target + distance + yaw error
-            self.latest_vecs["lidar"],
-            self.latest_vecs["camera"],
-            self.latest_vecs["imu"],
-            self.latest_vecs["gyro"],
+            lidar_vec,
+            camera_vec,
+            imu_vec,
+            gyro_vec,
             norm_gps,  # 3 values: normalized GPS relative to spawn (meters -> [-1,1])
         ]
         return np.concatenate(parts).astype(np.float32)
